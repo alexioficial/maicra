@@ -23,6 +23,7 @@ const schema = z.object({
     .default('2G'),
   MC_PUBLIC_ADDRESS: optionalString,
   MC_DATA_MOUNT: optionalString,
+  MC_NETWORK: z.string().trim().min(1).default('maicra'),
   MC_UID: z.coerce.number().int().default(1000),
   MC_GID: z.coerce.number().int().default(1000),
   TZ: z.string().default('UTC'),
@@ -47,6 +48,8 @@ export interface Config {
   mcMemoryMb: number;
   mcPublicAddress: string | undefined;
   mcDataMount: string | undefined;
+  /** Docker network the Minecraft container joins. Created by the panel when it does not exist. */
+  mcNetwork: string;
   mcUid: number;
   mcGid: number;
   timezone: string;
@@ -83,6 +86,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     mcMemoryMb: parseMemoryMb(e.MC_MEMORY),
     mcPublicAddress: e.MC_PUBLIC_ADDRESS,
     mcDataMount: e.MC_DATA_MOUNT,
+    mcNetwork: e.MC_NETWORK,
     mcUid: e.MC_UID,
     mcGid: e.MC_GID,
     timezone: e.TZ,

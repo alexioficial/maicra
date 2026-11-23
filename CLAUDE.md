@@ -28,9 +28,9 @@ Done and working against real Docker (the user ran Paper 1.21.1 with 6 GB of RAM
 
 Not done yet:
 
-- The folder is **not a git repository**. The next planned step is `git init`, push to GitHub and deploy on Coolify. Do not commit or create a repository unless the user asks.
-- The panel has never been deployed on the real VPS.
 - Mobile layout, Backups, Worlds and Access.
+
+Deployment (2026-11-23): the code is in the public GitHub repository `alexioficial/maicra` (branch `main`) and the panel runs on the user's Coolify at `https://mc.widube.com` (section 9). Do not commit or push unless the user asks: every push to `main` triggers an automatic redeploy of the panel. The Minecraft server itself has not been started on the VPS yet, because the user does the first start and accepts the EULA.
 
 ## 2. Rules for working with this user
 
@@ -54,7 +54,7 @@ maicra/
 ├─ docker-compose.yml         what Coolify deploys: only the panel service + the data volume
 ├─ docker-compose.local.yml   adds "3000:3000" for trying the panel on a PC
 ├─ .env / .env.example        development settings (RUNTIME=fake) / documented template
-├─ ref/aternos/               14 screenshots of the real Aternos panel, used as design reference
+├─ ref/aternos/               14 screenshots of the real Aternos panel, design reference (git ignored: the repository is public)
 ├─ backups/                   local copies of files taken for inspection (git ignored)
 ├─ server/                    the API and the Docker control
 │  └─ src/
@@ -96,6 +96,7 @@ Browser ──HTTPS──> Maicra panel (Fastify + React) ──/var/run/docker.
 
 - The panel is one container. It creates and controls a **separate** Minecraft container from the `itzg/minecraft-server` image through the Docker API. Redeploying or restarting the panel does not stop Minecraft. The user accepted the security cost of mounting `docker.sock`.
 - The image tag is `${MC_IMAGE}:java${java}`, for example `itzg/minecraft-server:java21`. Container name defaults to `maicra-minecraft`, restart policy is `unless-stopped`, `StopTimeout` is 120 seconds, Docker logs rotate at 10 MB.
+- The Minecraft container joins the network `MC_NETWORK` (default `maicra`), a user defined bridge that the panel creates when missing. **Do not put it back on Docker's default `bridge` network.** On the user's VPS the default bridge could not resolve names: the image looped on `[init] [ERROR] Failed to download paper` with `Failed to resolve 'fill.papermc.io'`, while the panel on Coolify's network resolved fine. User defined networks use Docker's embedded DNS server.
 - Both containers mount the same data volume at `/data`. The panel finds the real volume name by inspecting **its own container** and reading the mount whose destination is `DATA_DIR`. Coolify prefixes volume names, so never hard code the name. `MC_DATA_MOUNT` overrides this.
 - Panel settings live in `/data/.maicra/state.json` (software, Java version, timezone, RAM, EULA flag, a pinned RCON password). The `.maicra` folder is hidden from the Files page and refused by the file API.
 - Console commands, the player list and graceful shutdown use `rcon-cli` through `docker exec` inside the Minecraft container. The RCON port is never published.
@@ -229,16 +230,26 @@ Then drive it with the `agent-browser` CLI (installed globally; run `agent-brows
 
 ## 9. Deploying on Coolify
 
-1. Push the repository to GitHub or GitLab (not done yet).
-2. Create a resource with the **Docker Compose** build pack using `docker-compose.yml`.
-3. Set `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `SESSION_SECRET` (at least 32 random characters) and `MC_PUBLIC_ADDRESS`. Optional: `MC_PORT`, `MC_MEMORY`, `TZ`.
-4. Give the `maicra` service a domain on port 3000. Coolify handles HTTPS.
-5. Open the Minecraft port (25565 by default) in the VPS firewall. Players connect to it directly, not through the panel domain. If the VPS already runs another Minecraft server on that port, change `MC_PORT`.
-6. The first start downloads the Minecraft image, which takes a few minutes.
+Current setup, created through the Coolify MCP server (Coolify application `xfc09nzauxwxexxtbgyeauds`, project "Maicra", environment `production`, GitHub App source `widube`):
+
+- **Build pack: Dockerfile**, not Docker Compose. The Coolify API available through the MCP server cannot set the compose file location or the per service domain, and it rejects host path bind mounts. `docker-compose.yml` is therefore not what runs on Coolify. It stays for people who deploy with the Docker Compose build pack by hand (set the service domain to `https://<domain>:3000` in the Coolify interface).
+- Domain `https://mc.widube.com`, port 3000. In Cloudflare that record is **DNS only** (grey cloud) and points at the VPS, because Minecraft players connect to the same name on port 25565 and Cloudflare does not proxy that traffic.
+- Storage: a named volume mounted at `/data`, plus a **Host File Mount** of `/var/run/docker.sock` at the same path. `custom_docker_run_options` with `-v` is ignored by Coolify, so do not use it for the socket.
+- Health check: path `/api/health`, port 3000, and host `127.0.0.1`. The default host `localhost` resolves to IPv6 first inside the Alpine image and the panel only listens on IPv4, so the check fails with "Connection refused".
+- Environment variables are runtime only (never build time, so secrets do not become build arguments): `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `SESSION_SECRET`, `MC_PUBLIC_ADDRESS=mc.widube.com`, `MC_PORT=25565`, `MC_MEMORY=2G`. Read them from Coolify when needed instead of writing them in files.
+- Port 25565 must be open in the VPS firewall. The first start downloads the Minecraft image, which takes a few minutes.
+- If a future change needs a different setup, redeploy with the Coolify deploy tool and check `https://mc.widube.com/api/health`.
+
+Steps for a fresh Docker Compose deployment by hand:
+
+1. Create a resource with the **Docker Compose** build pack using `docker-compose.yml`.
+2. Set `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `SESSION_SECRET` (at least 32 random characters) and `MC_PUBLIC_ADDRESS`. Optional: `MC_PORT`, `MC_MEMORY`, `TZ`.
+3. Give the `maicra` service a domain on port 3000. Coolify handles HTTPS.
+4. Open the Minecraft port in the VPS firewall. If the VPS already runs another Minecraft server on that port, change `MC_PORT`.
 
 ### Environment variables (`server/src/config.ts`)
 
-Required: `ADMIN_EMAIL`, `ADMIN_PASSWORD` (8 or more characters), `SESSION_SECRET` (32 or more). Optional with defaults: `PORT` 3000, `HOST` 0.0.0.0, `DATA_DIR` /data, `RUNTIME` docker (or `fake`), `MC_IMAGE` itzg/minecraft-server, `MC_CONTAINER_NAME` maicra-minecraft, `MC_PORT` 25565, `MC_MEMORY` 2G (initial value only), `MC_PUBLIC_ADDRESS`, `MC_DATA_MOUNT` (auto detected), `MC_UID` and `MC_GID` 1000, `TZ` UTC, `COOKIE_SECURE` auto, `WEB_DIST`, `LOG_LEVEL`.
+Required: `ADMIN_EMAIL`, `ADMIN_PASSWORD` (8 or more characters), `SESSION_SECRET` (32 or more). Optional with defaults: `PORT` 3000, `HOST` 0.0.0.0, `DATA_DIR` /data, `RUNTIME` docker (or `fake`), `MC_IMAGE` itzg/minecraft-server, `MC_CONTAINER_NAME` maicra-minecraft, `MC_PORT` 25565, `MC_MEMORY` 2G (initial value only), `MC_PUBLIC_ADDRESS`, `MC_DATA_MOUNT` (auto detected), `MC_NETWORK` maicra, `MC_UID` and `MC_GID` 1000, `TZ` UTC, `COOKIE_SECURE` auto, `WEB_DIST`, `LOG_LEVEL`.
 
 ## 10. Conventions
 
@@ -252,4 +263,4 @@ Required: `ADMIN_EMAIL`, `ADMIN_PASSWORD` (8 or more characters), `SESSION_SECRE
 
 ## 11. Ideas not built yet
 
-Backups, Worlds, Access for other users, mobile layout, a "force stop" button for a server stuck while starting, enabling and disabling mods by renaming files, reinstalling only the software jar, a container memory limit above the Java heap, hiding the `.rcon-cli.*` dot files from the Files page (they contain the RCON password), `git init` and Coolify deployment.
+Backups, Worlds, Access for other users, mobile layout, a "force stop" button for a server stuck while starting, enabling and disabling mods by renaming files, reinstalling only the software jar, a container memory limit above the Java heap, hiding the `.rcon-cli.*` dot files from the Files page (they contain the RCON password).

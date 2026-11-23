@@ -110,8 +110,40 @@ export class DockerRuntime implements Runtime {
   }
 
   async specHash(spec: RuntimeSpec): Promise<string> {
-    const payload = { image: this.imageName(spec), env: this.buildEnv(spec), mount: await this.resolveDataMount(), port: spec.port };
+    const payload = {
+      image: this.imageName(spec),
+      env: this.buildEnv(spec),
+      mount: await this.resolveDataMount(),
+      port: spec.port,
+      network: this.config.mcNetwork,
+    };
     return createHash('sha1').update(JSON.stringify(payload)).digest('hex');
+  }
+
+  /**
+   * Creates the network the Minecraft container joins, unless it already exists.
+   *
+   * The container is not left on Docker's default "bridge" network on purpose. There it gets a
+   * copy of the host's /etc/resolv.conf, and on some hosts those name servers do not answer from
+   * inside a container (seen on a VPS: the image failed with "Failed to resolve 'fill.papermc.io'"
+   * while the panel, on a user defined network, resolved it fine). A user defined network uses
+   * Docker's embedded DNS server instead, which is what Docker Compose and Coolify use as well.
+   */
+  private async ensureNetwork(): Promise<void> {
+    const name = this.config.mcNetwork;
+    if (name === 'bridge' || name === 'host' || name === 'none') return; // Built in, always present.
+    try {
+      await this.docker.getNetwork(name).inspect();
+      return;
+    } catch (error) {
+      if (statusCode(error) !== 404) throw error;
+    }
+    try {
+      await this.docker.createNetwork({ Name: name, Driver: 'bridge', Labels: { 'maicra.managed': 'true' } });
+    } catch (error) {
+      // 409 means another call created it in the meantime, which is fine.
+      if (statusCode(error) !== 409) throw error;
+    }
   }
 
   async inspect(): Promise<ContainerInfo> {
@@ -179,6 +211,7 @@ export class DockerRuntime implements Runtime {
     if (existing.exists) await this.container().remove({ force: true, v: false });
 
     const mount = await this.resolveDataMount();
+    await this.ensureNetwork();
     await this.docker.createContainer({
       name: this.config.mcContainerName,
       Image: this.imageName(spec),
@@ -188,6 +221,7 @@ export class DockerRuntime implements Runtime {
       StopTimeout: 120,
       HostConfig: {
         Binds: [`${mount}:/data`],
+        NetworkMode: this.config.mcNetwork,
         PortBindings: { [MINECRAFT_PORT]: [{ HostPort: String(spec.port) }] },
         RestartPolicy: { Name: 'unless-stopped' },
         LogConfig: { Type: 'json-file', Config: { 'max-size': '10m', 'max-file': '3' } },

@@ -71,6 +71,7 @@ If another Minecraft server on the same VPS already uses port 25565, set `MC_POR
 | `MC_IMAGE` | `itzg/minecraft-server` | Docker image. The panel adds the Java tag, for example `:java25` |
 | `MC_CONTAINER_NAME` | `maicra-minecraft` | Name of the Minecraft container |
 | `MC_DATA_MOUNT` | detected | Volume name or host path mounted at `/data` in the Minecraft container. Detected from the panel's own mount of `DATA_DIR` |
+| `MC_NETWORK` | `maicra` | Docker network the Minecraft container joins. The panel creates it when missing. Avoid `bridge`: on some hosts it cannot resolve names, so the server fails to download its software |
 | `MC_UID`, `MC_GID` | `1000` | Owner of Minecraft files. Files the panel writes get the same owner |
 | `DATA_DIR` | `/data` | Where the panel sees the Minecraft data |
 | `PORT` | `3000` | Panel HTTP port |
