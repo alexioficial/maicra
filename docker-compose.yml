@@ -1,0 +1,23 @@
+# Deploys the panel. The panel then creates and controls the Minecraft container by itself,
+# through the Docker socket. Minecraft is not a service in this file on purpose: it keeps running
+# when you redeploy or restart the panel.
+services:
+  maicra:
+    build: .
+    restart: unless-stopped
+    environment:
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET (at least 32 characters)}
+      MC_PUBLIC_ADDRESS: ${MC_PUBLIC_ADDRESS:-}
+      MC_PORT: ${MC_PORT:-25565}
+      MC_MEMORY: ${MC_MEMORY:-2G}
+      TZ: ${TZ:-UTC}
+    volumes:
+      # Gives the panel control of Docker on this host. Keep the panel behind HTTPS and a strong password.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Minecraft worlds, mods and settings. The Minecraft container mounts this same volume.
+      - minecraft-data:/data
+
+volumes:
+  minecraft-data:
