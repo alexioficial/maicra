@@ -4,6 +4,7 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  FileCog,
   FileText,
   Folder,
   LogOut,
@@ -27,6 +28,7 @@ import { STATUS_COLOR, useServer } from '../state/Server';
 const NAV = [
   { to: '/', label: 'Server', icon: Power, end: true },
   { to: '/options', label: 'Options', icon: SlidersHorizontal },
+  { to: '/properties', label: 'Properties', icon: FileCog },
   { to: '/console', label: 'Console', icon: Terminal },
   { to: '/log', label: 'Log', icon: FileText },
   { to: '/players', label: 'Players', icon: Users },

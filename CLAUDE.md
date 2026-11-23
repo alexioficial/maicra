@@ -22,6 +22,7 @@ Done and working against real Docker (the user ran Paper 1.21.1 with 6 GB of RAM
 - Live console with commands, latest log with download
 - Software and version picker for Vanilla, Snapshot, Paper, Spigot, Purpur, Fabric, Quilt, NeoForge and Forge, with the Java version chosen automatically
 - Options page (17 `server.properties` fields, MOTD editor with colors, server icon upload, timezone, Java version, maximum RAM) and a Reinstall button
+- Properties page: a raw text editor for `server.properties` with a manual Save button (no autosave, no validation)
 - Players (whitelist, operators, bans), Files (full file manager)
 - Mods, Plugins and Datapacks pages (a folder with upload, download and delete)
 - Dockerfile, `docker-compose.yml` for Coolify, `docker-compose.local.yml` for local testing
@@ -79,7 +80,7 @@ maicra/
       ├─ hooks.ts, format.ts, mc.ts, software.ts
       ├─ state/               Auth.tsx, Server.tsx (WebSocket), Toast.tsx
       ├─ components/          Layout.tsx, ui.tsx, Terminal.tsx, Motd.tsx
-      ├─ pages/               Server, Options, Console, Log, Players, Software, Files, Addons, Login
+      ├─ pages/               Server, Options, Properties, Console, Log, Players, Software, Files, Addons, Login
       ├─ styles.css           design tokens and all styles (no CSS framework)
       └─ mc.test.ts
 ```
@@ -175,9 +176,10 @@ The server serves `web/dist` as static files, with `index.html` as the fallback 
 
 ## 7. Web app
 
-- Layout: top bar, collapsible left sidebar (state kept in localStorage), content. Sidebar order: Server, Options, Console, Log, Players, Software, **Mods** (only with Fabric, Quilt, NeoForge or Forge), **Plugins** (only with Paper, Spigot or Purpur), **Datapacks** (always), Files. The helper functions are in `web/src/software.ts`.
+- Layout: top bar, collapsible left sidebar (state kept in localStorage), content. Sidebar order: Server, Options, Properties, Console, Log, Players, Software, **Mods** (only with Fabric, Quilt, NeoForge or Forge), **Plugins** (only with Paper, Spigot or Purpur), **Datapacks** (always), Files. The helper functions are in `web/src/software.ts`.
 - `state/Server.tsx` keeps one WebSocket, applies console lines once per animation frame, reconnects with backoff and polls `/api/server` while disconnected (which also notices an expired session through a 401).
 - `pages/Addons.tsx` is one generic page configured three times (mods, plugins, datapacks): list a folder, upload with drag and drop, download, delete with confirmation. Datapacks resolve their folder as `<level-name>/datapacks` by reading `level-name` from the properties. It creates a missing folder through `POST /files/folder` with `parents`.
+- `pages/Properties.tsx` edits the whole `server.properties` as text through the normal `GET` and `PUT /api/files/content` routes, so it needs no extra endpoint. It saves only when the user presses Save or Ctrl+S, and warns before the unsaved text is lost. The Options page and this page write the same file, so reload before editing here if Options was used in the meantime.
 - `pages/Options.tsx` is data driven (`FIELDS`). The "Cracked" toggle is the inverse of `online-mode`. Text fields decode and encode Java properties escapes (`mc.ts`): the file stores `\u00A7` for the section sign and `\n` for line breaks. The resource pack prompt is a JSON string. Edits are saved 600 ms after the last change.
 - Design tokens come from the real Aternos CSS: font Play (UI), Roboto Mono (console), Pixelify Sans (MOTD card); main `#2b87d3`, success `#1fd78d`, warn `#eb7b59`, danger `#f62451`; grays from `#f0f0f0` to `#161c21`; buttons are flat with 2 px radius. Icons are lucide (Aternos uses a paid Font Awesome set). The Aternos name and logo are not used on purpose.
 - The `ref/aternos` screenshots were taken at roughly 125 to 150 % zoom, so pixel sizes in them are not CSS pixels.

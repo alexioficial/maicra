@@ -8,6 +8,7 @@ import { LogPage } from './pages/Log';
 import { Login } from './pages/Login';
 import { OptionsPage } from './pages/Options';
 import { PlayersPage } from './pages/Players';
+import { PropertiesPage } from './pages/Properties';
 import { ServerPage } from './pages/Server';
 import { SoftwarePage } from './pages/Software';
 import { useAuth } from './state/Auth';
@@ -31,6 +32,7 @@ export function App() {
         <Route element={<Layout />}>
           <Route index element={<ServerPage />} />
           <Route path="options" element={<OptionsPage />} />
+          <Route path="properties" element={<PropertiesPage />} />
           <Route path="console" element={<ConsolePage />} />
           <Route path="log" element={<LogPage />} />
           <Route path="players" element={<PlayersPage />} />
