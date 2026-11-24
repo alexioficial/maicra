@@ -13,11 +13,19 @@ export interface PanelState {
   memoryMb: number;
   /** Initial (minimum) Java heap in megabytes. Never above memoryMb. */
   initMemoryMb: number;
+  /** Freeze the server while nobody is online (the autopause feature of the image). */
+  sleepWhenEmpty: boolean;
+  /** Minutes without players before the server is frozen. */
+  sleepAfterMinutes: number;
 }
+
+/** The image's own default for the autopause timeout is one hour as well. */
+export const DEFAULT_SLEEP_AFTER_MINUTES = 60;
 
 /**
  * Older state files have no memory value. They get the default, which is the MC_MEMORY setting.
  * Files written before the minimum RAM option have no initMemoryMb, see withInitMemory.
+ * Files written before the sleep option get it switched off, so an existing server keeps running.
  */
 function buildSchema(defaultMemoryMb: number) {
   return z.object({
@@ -31,6 +39,8 @@ function buildSchema(defaultMemoryMb: number) {
     rconPassword: z.string().min(8),
     memoryMb: z.number().int().min(256).default(defaultMemoryMb),
     initMemoryMb: z.number().int().min(256).optional(),
+    sleepWhenEmpty: z.boolean().default(false),
+    sleepAfterMinutes: z.number().int().min(1).default(DEFAULT_SLEEP_AFTER_MINUTES),
   });
 }
 

@@ -14,6 +14,8 @@ export interface RuntimeSpec {
   port: number;
   uid: number;
   gid: number;
+  /** Freeze the server after this many seconds without players, or null to keep it running. */
+  sleepAfterSeconds: number | null;
 }
 
 export interface ContainerInfo {
@@ -25,6 +27,8 @@ export interface ContainerInfo {
   startedAt: number | null;
   health: 'none' | 'starting' | 'healthy' | 'unhealthy';
   specHash: string | null;
+  /** The server process is frozen because nobody was online. Only true while running. */
+  sleeping: boolean;
 }
 
 export interface LogHandle {
@@ -56,6 +60,8 @@ export interface Runtime {
     onEnd: () => void,
   ): Promise<LogHandle>;
   exec(command: string[]): Promise<ExecResult>;
+  /** Unfreezes a sleeping server right away. Does nothing when it is not sleeping. */
+  wake(): Promise<void>;
   stats(): Promise<{ memoryBytes: number } | null>;
   /** Total memory of the machine the server runs on, in megabytes, or null if it cannot be read. */
   hostMemoryMb(): Promise<number | null>;

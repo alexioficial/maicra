@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { Check, Copy, Cpu, Globe, Clock, Plug, Power, RotateCw, Settings2, Shuffle, Square, Tag, Users, X } from 'lucide-react';
+import { Check, Copy, Cpu, Globe, Clock, Moon, Plug, Power, RotateCw, Settings2, Shuffle, Square, Tag, Users, X } from 'lucide-react';
 import type { CSSProperties } from 'react';
 import { ApiError, api, errorMessage } from '../api';
 import { Button, InfoTile, Modal, Spinner } from '../components/ui';
-import { formatDuration, formatMemory } from '../format';
+import { formatDuration, formatMemory, formatMinutes } from '../format';
 import { useNow } from '../hooks';
-import { STATUS_COLOR, STATUS_LABEL, useServer } from '../state/Server';
+import { statusLook, useServer } from '../state/Server';
 import { useToast } from '../state/Toast';
 
 type Action = 'start' | 'stop' | 'restart';
@@ -58,12 +58,18 @@ export function ServerPage() {
     }
   };
 
-  const { status, reinstalling } = snapshot;
+  const { status, reinstalling, sleeping } = snapshot;
   const running = snapshot.startedAt !== null;
   const software = snapshot.software;
+  const look = statusLook(snapshot);
+  const uptimeNote = sleeping
+    ? 'Sleeping until a player connects'
+    : snapshot.sleepAfterMinutes !== null
+      ? `Sleeps after ${formatMinutes(snapshot.sleepAfterMinutes)} without players`
+      : 'The server stays on until you stop it';
 
   return (
-    <div className="stack" style={{ '--status-color': reinstalling ? 'var(--warn)' : STATUS_COLOR[status] } as CSSProperties}>
+    <div className="stack" style={{ '--status-color': reinstalling ? 'var(--warn)' : look.color } as CSSProperties}>
       <div>
         <div className="host-card">
           <div className="host-name">{snapshot.address}</div>
@@ -76,10 +82,11 @@ export function ServerPage() {
           <div className="status-main">
             <span className="status-icon">
               {status === 'offline' && !reinstalling ? <Square size={14} fill="currentColor" strokeWidth={0} /> : null}
-              {status === 'online' ? <Check size={22} strokeWidth={4} /> : null}
+              {status === 'online' && !sleeping ? <Check size={22} strokeWidth={4} /> : null}
+              {status === 'online' && sleeping ? <Moon size={20} fill="currentColor" strokeWidth={0} /> : null}
               {status === 'starting' || status === 'stopping' || reinstalling ? <Spinner /> : null}
             </span>
-            {reinstalling ? 'Reinstalling' : STATUS_LABEL[status]}
+            {reinstalling ? 'Reinstalling' : look.label}
           </div>
           <div className="status-detail">{snapshot.detail ?? ''}</div>
         </div>
@@ -191,7 +198,7 @@ export function ServerPage() {
         {running && snapshot.startedAt !== null ? (
           <InfoTile icon={<Clock size={18} />} label="Uptime">
             {formatDuration(now - snapshot.startedAt)}
-            <div className="info-tile-sub">The server stays on until you stop it</div>
+            <div className="info-tile-sub">{uptimeNote}</div>
           </InfoTile>
         ) : null}
       </div>

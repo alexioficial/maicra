@@ -8,6 +8,7 @@ import {
   FileText,
   Folder,
   LogOut,
+  Moon,
   Package,
   Pickaxe,
   Plug,
@@ -23,7 +24,7 @@ import type { CSSProperties } from 'react';
 import { cx } from '../format';
 import { isModLoader, isPluginServer } from '../software';
 import { useAuth } from '../state/Auth';
-import { STATUS_COLOR, useServer } from '../state/Server';
+import { statusLook, useServer } from '../state/Server';
 
 const NAV = [
   { to: '/', label: 'Server', icon: Power, end: true },
@@ -66,7 +67,7 @@ export function Layout() {
     });
   };
 
-  const status = snapshot?.status ?? 'offline';
+  const look = statusLook(snapshot);
   const software = snapshot ? `${snapshot.software.type} ${snapshot.software.version}` : '';
 
   return (
@@ -88,7 +89,7 @@ export function Layout() {
       </header>
 
       <div className={cx('shell', collapsed && 'collapsed')}>
-        <aside className="sidebar" style={{ '--status-color': STATUS_COLOR[status] } as CSSProperties}>
+        <aside className="sidebar" style={{ '--status-color': look.color } as CSSProperties}>
           <div className="sidebar-server">
             <div className="sidebar-server-text">
               <div className="sidebar-server-name">Minecraft server</div>
@@ -96,8 +97,8 @@ export function Layout() {
                 {software}
               </div>
             </div>
-            <span className="status-dot" title={status} aria-label={`Server is ${status}`}>
-              <Square size={11} fill="currentColor" strokeWidth={0} />
+            <span className="status-dot" title={look.label} aria-label={`Server is ${look.label.toLowerCase()}`}>
+              {snapshot?.sleeping ? <Moon size={13} fill="currentColor" strokeWidth={0} /> : <Square size={11} fill="currentColor" strokeWidth={0} />}
             </span>
           </div>
 

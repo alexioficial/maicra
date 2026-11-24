@@ -5,7 +5,7 @@ import type { EnvironmentResponse, PropertiesResponse } from '@api/types';
 import { api, errorMessage, uploadFiles } from '../api';
 import { Motd, MotdEditor } from '../components/Motd';
 import { Button, Modal, Spinner, Stepper, Toggle } from '../components/ui';
-import { cx, formatMemory } from '../format';
+import { cx, formatMemory, formatMinutes } from '../format';
 import { useApi } from '../hooks';
 import { decodeProperty, encodeProperty, readJsonText, writeJsonText } from '../mc';
 import { useServer } from '../state/Server';
@@ -115,7 +115,14 @@ export function OptionsPage() {
   const offline = snapshot?.status === 'offline';
   const canReinstall = offline && !snapshot?.reinstalling;
 
-  const saveEnvironment = async (patch: { java?: string; timezone?: string; memoryMb?: number; initMemoryMb?: number }) => {
+  const saveEnvironment = async (patch: {
+    java?: string;
+    timezone?: string;
+    memoryMb?: number;
+    initMemoryMb?: number;
+    sleepWhenEmpty?: boolean;
+    sleepAfterMinutes?: number;
+  }) => {
     try {
       environment.setData(await api.put<EnvironmentResponse>('/api/environment', patch));
       toast.success('Saved. It applies the next time the server starts.');
@@ -276,6 +283,41 @@ export function OptionsPage() {
               Java starts with this much and grows up to the maximum when it needs more. The same value as the maximum avoids pauses while it grows.
             </span>
           </div>
+          <div className="field">
+            <label className="field-label" htmlFor="opt-sleep-after">
+              Sleep when empty
+            </label>
+            <div className="field-inline">
+              <Toggle
+                label="Sleep when empty"
+                checked={environment.data.sleepWhenEmpty}
+                disabled={!offline}
+                onChange={(checked) => void saveEnvironment({ sleepWhenEmpty: checked })}
+              />
+              <select
+                id="opt-sleep-after"
+                className="input"
+                value={environment.data.sleepAfterMinutes}
+                disabled={!offline || !environment.data.sleepWhenEmpty}
+                onChange={(event) => void saveEnvironment({ sleepAfterMinutes: Number(event.target.value) })}
+              >
+                {environment.data.sleepAfterOptionsMinutes.map((minutes) => (
+                  <option key={minutes} value={minutes}>
+                    After {formatMinutes(minutes)} without players
+                  </option>
+                ))}
+              </select>
+            </div>
+            <span className="field-hint">
+              Freezes the server when nobody is online and wakes it the moment a player connects, so joining feels the same. It saves CPU; the RAM stays reserved.
+            </span>
+          </div>
+          {environment.data.sleepWhenEmpty && snapshot?.software.type === 'spigot' ? (
+            <div className="notice" style={{ flex: '1 1 100%' }}>
+              <Info size={18} />
+              Spigot has its own watchdog that the panel cannot turn off. Raise settings.timeout-time in spigot.yml, or the server may restart when it wakes up.
+            </div>
+          ) : null}
           {environment.data.hostMemoryMb !== null && environment.data.memoryMb > environment.data.recommendedMemoryMb ? (
             <div className="notice" style={{ flex: '1 1 100%' }}>
               <Info size={18} />
@@ -285,7 +327,7 @@ export function OptionsPage() {
           {!offline ? (
             <div className="notice" style={{ flex: '1 1 100%' }}>
               <Info size={18} />
-              Stop the server to change the timezone, Java version or RAM.
+              Stop the server to change the timezone, Java version, RAM or sleep setting.
             </div>
           ) : null}
         </div>

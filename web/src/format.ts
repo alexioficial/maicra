@@ -26,6 +26,15 @@ export function formatMemory(megabytes: number): string {
   return megabytes >= 1024 ? `${(megabytes / 1024).toFixed(1).replace(/\.0$/, '')} GB` : `${Math.round(megabytes)} MB`;
 }
 
+/** "5 minutes", "1 hour", "2 hours", "90 minutes". */
+export function formatMinutes(minutes: number): string {
+  if (minutes >= 60 && minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+  }
+  return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+}
+
 export function cx(...parts: (string | false | null | undefined)[]): string {
   return parts.filter(Boolean).join(' ');
 }

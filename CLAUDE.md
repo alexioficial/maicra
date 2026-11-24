@@ -11,7 +11,7 @@ Who the user is and what they want:
 - A Spanish speaker. **Reply to them in Spanish.** The panel's interface, the code, the comments and the docs are in English.
 - They had Minecraft servers on the VPS before but with no interface. They find the Aternos panel the most comfortable one and refuse to install an existing third party panel (Pterodactyl, Crafty and similar). So this is built from scratch.
 - At the start they wanted an exact Aternos replica. Later they relaxed that: design details are left to Claude, guided by the screenshots in `ref/aternos/`.
-- **Once the server is started it must never stop on its own**, not even when nobody is playing. There is no queue, no idle countdown, no ads and no promo bars.
+- **Once the server is started it must never stop on its own**, not even when nobody is playing. There is no queue, no idle countdown, no ads and no promo bars. The one exception the user asked for (2026-11-24) is the opt-in **Sleep when empty** option: it freezes Java while nobody is online and does not stop the server. It is off by default.
 - Scope decisions: Java only, exactly one server, one user whose login comes from environment variables, English interface. Skipped on purpose for now: Worlds, Access (sharing with other users), Backups, the mobile layout, the Domains button and public mod or plugin search.
 
 ### Status (2026-11-23)
@@ -25,6 +25,7 @@ Done and working against real Docker (the user ran Paper 1.21.1 with 6 GB of RAM
 - Properties page: a raw text editor for `server.properties` with a manual Save button (no autosave, no validation)
 - Players (whitelist, operators, bans), Files (full file manager)
 - Mods, Plugins and Datapacks pages (a folder with upload, download and delete)
+- Sleep when empty (2026-11-24, section 4): an option in Options that turns on the image's autopause. Verified with tests and the fake runtime only. The user has not tried it against the real image yet
 - Dockerfile, `docker-compose.yml` for Coolify, `docker-compose.local.yml` for local testing
 
 Not done yet:
@@ -99,12 +100,12 @@ Browser ──HTTPS──> Maicra panel (Fastify + React) ──/var/run/docker.
 - The image tag is `${MC_IMAGE}:java${java}`, for example `itzg/minecraft-server:java21`. Container name defaults to `maicra-minecraft`, restart policy is `unless-stopped`, `StopTimeout` is 120 seconds, Docker logs rotate at 10 MB.
 - The Minecraft container joins the network `MC_NETWORK` (default `maicra`), a user defined bridge that the panel creates when missing. **Do not put it back on Docker's default `bridge` network.** On the user's VPS the default bridge could not resolve names: the image looped on `[init] [ERROR] Failed to download paper` with `Failed to resolve 'fill.papermc.io'`, while the panel on Coolify's network resolved fine. User defined networks use Docker's embedded DNS server.
 - Both containers mount the same data volume at `/data`. The panel finds the real volume name by inspecting **its own container** and reading the mount whose destination is `DATA_DIR`. Coolify prefixes volume names, so never hard code the name. `MC_DATA_MOUNT` overrides this.
-- Panel settings live in `/data/.maicra/state.json` (software, Java version, timezone, RAM, EULA flag, a pinned RCON password). The `.maicra` folder is hidden from the Files page and refused by the file API.
+- Panel settings live in `/data/.maicra/state.json` (software, Java version, timezone, RAM, sleep setting, EULA flag, a pinned RCON password). The `.maicra` folder is hidden from the Files page and refused by the file API.
 - Console commands, the player list and graceful shutdown use `rcon-cli` through `docker exec` inside the Minecraft container. The RCON port is never published.
 
 ### Facts about the itzg image that shaped the design (checked in its source)
 
-- Property variables are applied to `server.properties` only when set. The panel passes only `EULA`, `TYPE`, `VERSION`, `MEMORY`, `INIT_MEMORY`, `TZ`, `UID`, `GID` and `RCON_PASSWORD`, so edits made in the Options page survive every restart. **Do not add variables such as `MOTD`, `DIFFICULTY` or `MAX_PLAYERS`**, they would overwrite the user's edits on each start.
+- Property variables are applied to `server.properties` only when set. The panel passes only `EULA`, `TYPE`, `VERSION`, `MEMORY`, `INIT_MEMORY`, `TZ`, `UID`, `GID` and `RCON_PASSWORD`, so edits made in the Options page survive every restart. **Do not add variables such as `MOTD`, `DIFFICULTY` or `MAX_PLAYERS`**, they would overwrite the user's edits on each start. The only exception is `MAX_TICK_TIME=-1`, passed only while Sleep when empty is on (see the autopause facts below). Turning the option off later leaves `max-tick-time=-1` in the file, which only means the watchdog stays off.
 - The RCON password is random on every start unless `RCON_PASSWORD` is set. The panel pins one in `state.json`; otherwise `rcon-cli` would stop matching the file.
 - The image has a healthcheck (`mc-health`, start period 2 minutes). The panel treats the server as online when it sees the `Done (x.xxxs)!` log line, with `healthy` as a fallback.
 - **A stop sent while Minecraft is still loading is ignored by the image**, and Docker kills the server after the timeout (exit code 137). The panel therefore waits until the server is ready before stopping it (section 5).
@@ -112,13 +113,23 @@ Browser ──HTTPS──> Maicra panel (Fastify + React) ──/var/run/docker.
 - Because of `unless-stopped`, typing `/stop` in the game restarts the container. Stop in the panel stays stopped.
 - Java tags used: 8, 11, 17, 21, 25. Minecraft 26.x needs Java 25, 1.21.x needs 21, 1.18 to 1.20.4 need 17, older need 8.
 
+### Autopause, the base of Sleep when empty (checked in the image source, `scripts/auto/` and `scripts/start-autopause`)
+
+- `ENABLE_AUTOPAUSE=TRUE` starts a daemon that checks the player count every 10 s with `mc-monitor`. It freezes Java after `AUTOPAUSE_TIMEOUT_EST` seconds once the last player leaves, after `AUTOPAUSE_TIMEOUT_INIT` after a start nobody joins, and after `AUTOPAUSE_TIMEOUT_KN` after a wake without a join. The panel passes the user's choice for the first two and `min(120, choice)` for the third (`containerEnv` in `runtime/docker.ts`).
+- Freezing (`pause.sh`): `rcon-cli save-all`, then `pkill -STOP java`, then it creates `/data/.paused`. Waking (`/image/scripts/auto/resume.sh`): `pkill -CONT java` and deletes `/data/.paused`. The panel reads that marker from the shared volume to show "Sleeping". The image never deletes a marker left by a container stopped while frozen, so the panel ignores a marker older than the current run.
+- `knockd` wakes the server when a TCP SYN reaches the Minecraft port **or the RCON port** on `eth0`. The panel's `rcon-cli` goes through `docker exec` on loopback, which knockd does not see.
+- While frozen, the daemon also wakes the server whenever any `rcon-cli` process exists in the container. That is why the panel does not poll the player list while the server sleeps: the poll would wake it every 5 seconds.
+- A frozen Java process cannot react to `docker stop`, so it would be killed at the timeout. The manager calls `wake()` before every stop of a ready server and before console commands. `mc-health` reports a frozen server as healthy.
+- Watchdogs: after a long freeze the first tick looks hours long. Vanilla and the mod loaders use `max-tick-time`; the image sets `MAX_TICK_TIME=-1` by itself only since its October 2026 builds, so the panel passes it explicitly. Paper and Purpur have their own watchdog, switched off with `JVM_DD_OPTS=disable.watchdog:true` (`-Ddisable.watchdog=true`, read by Paper's `WatchdogThread`). Spigot's watchdog has no such flag; the Options page tells the user to raise `settings.timeout-time` in `spigot.yml`.
+- The RAM stays reserved while frozen; only the CPU is saved. Since Minecraft 1.21.2 vanilla can pause by itself (`pause-when-empty-seconds`), and the image's docs advise against autopause there. The user's server is Paper 1.21.1, which is why autopause was chosen.
+
 ## 5. Server internals
 
 ### Runtime abstraction (`server/src/runtime`)
 
-`Runtime` is the interface the manager talks to: `inspect`, `specHash`, `ensureImage`, `recreate`, `remove`, `start`, `stop`, `followLogs`, `exec`, `stats`, `hostMemoryMb`. `DockerRuntime` implements it with dockerode. `FakeRuntime` pretends to be a server: it prints realistic boot lines, writes sample files and answers a few commands. It exists so the interface can be developed and tested without Docker. It also has test hooks (`startCalls`, `stoppedWhileLoading`).
+`Runtime` is the interface the manager talks to: `inspect` (which also reports `sleeping`), `specHash`, `ensureImage`, `recreate`, `remove`, `start`, `stop`, `followLogs`, `exec`, `wake`, `stats`, `hostMemoryMb`. `DockerRuntime` implements it with dockerode. `FakeRuntime` pretends to be a server: it prints realistic boot lines, writes sample files and answers a few commands. It exists so the interface can be developed and tested without Docker. It also has test hooks (`startCalls`, `stoppedWhileLoading`, `stoppedWhileSleeping`, `sleepNow()`). With sleeping on it falls asleep like the image does, but each minute of the wait lasts one second, so 5 minutes becomes 5 seconds.
 
-`recreate` builds the container from a spec. The spec hash (image, environment, mount, port) is stored in the container label `maicra.spec`. Changing the software, Java version, RAM, timezone or RCON password changes the hash, and the next start recreates the container. The data volume is never touched by that.
+`recreate` builds the container from a spec. The spec hash (image, environment, mount, port) is stored in the container label `maicra.spec`. Changing the software, Java version, RAM, timezone, sleep setting or RCON password changes the hash, and the next start recreates the container. The data volume is never touched by that.
 
 ### ServerManager (`server/src/manager.ts`)
 
@@ -129,8 +140,9 @@ Actions:
 - `start`: needs the EULA accepted (otherwise API error `eula`, which makes the UI open the EULA modal), pulls the image if missing, recreates the container if the spec changed, starts it. A Stop pressed while the image downloads or the container is created **cancels the start** (`cancelLaunch`).
 - `stop` and `restart`: `stopGracefully()` first **waits until the server is ready** (up to 5 minutes), then calls `docker stop` with the 120 s timeout. If it never becomes ready the stop is forced after 15 s. While waiting, the detail text says so.
 - `reinstall`: only when offline. Removes the container, deletes everything in `/data` except `.maicra`, resets the software to the newest Vanilla and the RCON password. Keeps the EULA flag, RAM and timezone. Runs in the background; the snapshot has `reinstalling: true` meanwhile and Start is blocked. The API requires the body `{ "confirm": "REINSTALL" }` and the UI asks the user to type that word.
-- `setSoftware`, `setEnvironment` (Java, timezone, RAM): offline only (API error `must_be_offline`). Software changes keep worlds and files.
-- `command` and `runSilent`: run through rcon, only while online.
+- `setSoftware`, `setEnvironment` (Java, timezone, RAM, `sleepWhenEmpty`, `sleepAfterMinutes`): offline only (API error `must_be_offline`). Software changes keep worlds and files. The sleep wait must be one of `SLEEP_AFTER_MINUTES` (5, 10, 15, 30, 60, 120, 180).
+- `command` and `runSilent`: run through rcon, only while online. A sleeping server counts as online; they wake it first.
+- Sleeping: the status stays `online` and the snapshot has `sleeping: true`, zero players and a detail text. Each tick reads `sleeping` from the runtime.
 
 ### Software and versions (`versions.ts`)
 
@@ -165,7 +177,7 @@ All routes are under `/api` and need a session unless marked public. Errors are 
 | `POST /server/start`, `/stop`, `/restart`, `/eula`, `/reinstall` | Actions (start, stop, restart and reinstall answer 202) |
 | `GET /server/icon` | The `server-icon.png`, 404 when missing |
 | `GET /software`, `GET /software/:type/versions`, `PUT /software` | Catalog, versions, choose software |
-| `GET /environment`, `PUT /environment` | Java, timezone and RAM with the allowed options |
+| `GET /environment`, `PUT /environment` | Java, timezone, RAM and the sleep setting, with the allowed options |
 | `GET /options/properties`, `PUT /options/properties` | Read and update `server.properties` |
 | `POST /console/command` | Run a command (the answer also arrives over the WebSocket) |
 | `GET /log`, `GET /log/download` | Latest log |
@@ -180,6 +192,7 @@ The server serves `web/dist` as static files, with `index.html` as the fallback 
 - `state/Server.tsx` keeps one WebSocket, applies console lines once per animation frame, reconnects with backoff and polls `/api/server` while disconnected (which also notices an expired session through a 401).
 - `pages/Addons.tsx` is one generic page configured three times (mods, plugins, datapacks): list a folder, upload with drag and drop, download, delete with confirmation. Datapacks resolve their folder as `<level-name>/datapacks` by reading `level-name` from the properties. It creates a missing folder through `POST /files/folder` with `parents`.
 - `pages/Properties.tsx` edits the whole `server.properties` as text through the normal `GET` and `PUT /api/files/content` routes, so it needs no extra endpoint. It saves only when the user presses Save or Ctrl+S, and warns before the unsaved text is lost. The Options page and this page write the same file, so reload before editing here if Options was used in the meantime.
+- A sleeping server is shown as "Sleeping" in blue (`var(--main)`) with a moon icon. `statusLook()` in `state/Server.tsx` picks the label and color; use it instead of `STATUS_LABEL` and `STATUS_COLOR` directly.
 - `pages/Options.tsx` is data driven (`FIELDS`). The "Cracked" toggle is the inverse of `online-mode`. Text fields decode and encode Java properties escapes (`mc.ts`): the file stores `\u00A7` for the section sign and `\n` for line breaks. The resource pack prompt is a JSON string. Edits are saved 600 ms after the last change.
 - Design tokens come from the real Aternos CSS: font Play (UI), Roboto Mono (console), Pixelify Sans (MOTD card); main `#2b87d3`, success `#1fd78d`, warn `#eb7b59`, danger `#f62451`; grays from `#f0f0f0` to `#161c21`; buttons are flat with 2 px radius. Icons are lucide (Aternos uses a paid Font Awesome set). The Aternos name and logo are not used on purpose.
 - The `ref/aternos` screenshots were taken at roughly 125 to 150 % zoom, so pixel sizes in them are not CSS pixels.
@@ -192,8 +205,8 @@ Setup and commands (run from the repository root):
 npm install
 npm run dev                  # API on :3000 and Vite on :5173 (the Vite proxy forwards /api and the WebSocket)
 npm run typecheck            # both workspaces
-npm test -w server           # 37 tests, about 25 s, uses FakeRuntime
-npm test -w web              # 7 tests
+npm test -w server           # 45 tests, about a minute, uses FakeRuntime
+npm test -w web              # 8 tests
 npm run build                # web/dist and server/dist
 ```
 
@@ -261,7 +274,7 @@ Required: `ADMIN_EMAIL`, `ADMIN_PASSWORD` (8 or more characters), `SESSION_SECRE
 - Tests: the integration test in `server/src/app.test.ts` builds the whole app with `FakeRuntime` and a temp folder. Add a test for every new endpoint or rule. Long tests wait for status with `waitForStatus`.
 - New settings that change the container must go into the spec so the container is recreated.
 - Anything the panel writes into `/data` needs `own()` (chown to `MC_UID` and `MC_GID`).
-- Never publish the RCON port, never pass property variables to the image, never stop the server with a short timeout while it is online.
+- Never publish the RCON port, never pass property variables to the image (except `MAX_TICK_TIME` with sleeping on), never stop the server with a short timeout while it is online, and never stop it while it is frozen.
 
 ## 11. Ideas not built yet
 

@@ -5,7 +5,7 @@ import { api, errorMessage } from '../api';
 import { Terminal } from '../components/Terminal';
 import { Button } from '../components/ui';
 import { cx } from '../format';
-import { STATUS_LABEL, useServer } from '../state/Server';
+import { statusLook, useServer } from '../state/Server';
 import { useToast } from '../state/Toast';
 
 export function ConsolePage() {
@@ -49,8 +49,15 @@ export function ConsolePage() {
         <span className="card-head-title">
           <TerminalIcon size={22} />
           Console
-          <span className={cx('tag', online && 'tag-online', (status === 'starting' || status === 'stopping') && 'tag-working')}>
-            {STATUS_LABEL[status]}
+          <span
+            className={cx(
+              'tag',
+              online && (snapshot?.sleeping ? 'tag-sleeping' : 'tag-online'),
+              (status === 'starting' || status === 'stopping') && 'tag-working',
+            )}
+            title={snapshot?.sleeping ? 'A command wakes the server up' : undefined}
+          >
+            {statusLook(snapshot).label}
           </span>
         </span>
         <Link className="btn btn-light btn-sm" to="/log">

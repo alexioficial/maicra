@@ -23,6 +23,46 @@ const ITZG_TYPE: Record<SoftwareType, string> = {
 
 const MINECRAFT_PORT = '25565/tcp';
 
+/** Server types built on Paper. Their watchdog ignores max-tick-time and is switched off with a JVM flag. */
+const PAPER_BASED = new Set<SoftwareType>(['paper', 'purpur']);
+/** How long the image waits for a join after a server list ping before it freezes the server again. */
+const KNOCK_TIMEOUT_SECONDS = 120;
+/** Written by the image right after it freezes Java, and deleted when it wakes it. */
+const PAUSED_FILE = '.paused';
+/** The script the image's knockd daemon runs when a connection arrives at a frozen server. */
+const RESUME_SCRIPT = '/image/scripts/auto/resume.sh';
+
+/** Environment variables of the Minecraft container. Kept to the minimum, see CLAUDE.md. */
+export function containerEnv(spec: RuntimeSpec): string[] {
+  const env: Record<string, string> = {
+    EULA: 'TRUE',
+    TYPE: ITZG_TYPE[spec.type],
+    VERSION: spec.version,
+    MEMORY: spec.memory,
+    // Without this the image uses MEMORY for the initial heap too.
+    INIT_MEMORY: spec.initMemory,
+    TZ: spec.timezone,
+    UID: String(spec.uid),
+    GID: String(spec.gid),
+    RCON_PASSWORD: spec.rconPassword,
+  };
+  if (spec.sleepAfterSeconds !== null) {
+    // The autopause feature of the image. Once nobody has been online for the timeout it saves the
+    // world and freezes Java with SIGSTOP. Its knockd daemon unfreezes Java as soon as a connection
+    // reaches the Minecraft port, so a joining player gets in at once.
+    env.ENABLE_AUTOPAUSE = 'TRUE';
+    env.AUTOPAUSE_TIMEOUT_EST = String(spec.sleepAfterSeconds); // after the last player leaves
+    env.AUTOPAUSE_TIMEOUT_INIT = String(spec.sleepAfterSeconds); // after a start that nobody joins
+    env.AUTOPAUSE_TIMEOUT_KN = String(Math.min(KNOCK_TIMEOUT_SECONDS, spec.sleepAfterSeconds)); // after a ping without a join
+    // After a long freeze the first tick seems to have lasted hours, and the watchdog would kill
+    // the server just after it wakes. Only the newest builds of the image set this by themselves.
+    // It is the one server.properties variable the panel passes, and only while sleeping is on.
+    env.MAX_TICK_TIME = '-1';
+    if (PAPER_BASED.has(spec.type)) env.JVM_DD_OPTS = 'disable.watchdog:true';
+  }
+  return Object.entries(env).map(([key, value]) => `${key}=${value}`);
+}
+
 function statusCode(error: unknown): number | undefined {
   return (error as { statusCode?: number }).statusCode;
 }
@@ -95,26 +135,10 @@ export class DockerRuntime implements Runtime {
     );
   }
 
-  private buildEnv(spec: RuntimeSpec): string[] {
-    const env: Record<string, string> = {
-      EULA: 'TRUE',
-      TYPE: ITZG_TYPE[spec.type],
-      VERSION: spec.version,
-      MEMORY: spec.memory,
-      // Without this the image uses MEMORY for the initial heap too.
-      INIT_MEMORY: spec.initMemory,
-      TZ: spec.timezone,
-      UID: String(spec.uid),
-      GID: String(spec.gid),
-      RCON_PASSWORD: spec.rconPassword,
-    };
-    return Object.entries(env).map(([key, value]) => `${key}=${value}`);
-  }
-
   async specHash(spec: RuntimeSpec): Promise<string> {
     const payload = {
       image: this.imageName(spec),
-      env: this.buildEnv(spec),
+      env: containerEnv(spec),
       mount: await this.resolveDataMount(),
       port: spec.port,
       network: this.config.mcNetwork,
@@ -151,21 +175,42 @@ export class DockerRuntime implements Runtime {
   async inspect(): Promise<ContainerInfo> {
     try {
       const info = await this.container().inspect();
-      const startedAt = Date.parse(info.State.StartedAt);
+      const parsedStart = Date.parse(info.State.StartedAt);
+      const startedAt = Number.isNaN(parsedStart) || parsedStart < 0 ? null : parsedStart;
       return {
         exists: true,
         running: info.State.Running,
         restarting: info.State.Restarting,
-        startedAt: Number.isNaN(startedAt) || startedAt < 0 ? null : startedAt,
+        startedAt,
         health: (info.State.Health?.Status as ContainerInfo['health'] | undefined) ?? 'none',
         specHash: info.Config.Labels?.['maicra.spec'] ?? null,
+        sleeping: info.State.Running && startedAt !== null && (await this.pausedSince(startedAt)),
       };
     } catch (error) {
       if (statusCode(error) === 404) {
-        return { exists: false, running: false, restarting: false, startedAt: null, health: 'none', specHash: null };
+        return { exists: false, running: false, restarting: false, startedAt: null, health: 'none', specHash: null, sleeping: false };
       }
       throw error;
     }
+  }
+
+  /**
+   * Docker cannot tell that Java is frozen, but the image leaves a marker file in the shared data
+   * folder while it is. A marker older than the current run was left behind by a container that
+   * was stopped while frozen, and is ignored.
+   */
+  private async pausedSince(startedAt: number): Promise<boolean> {
+    try {
+      const stat = await fs.stat(path.join(this.config.dataDir, PAUSED_FILE));
+      return stat.mtimeMs >= startedAt;
+    } catch {
+      return false;
+    }
+  }
+
+  async wake(): Promise<void> {
+    const result = await this.exec([RESUME_SCRIPT]);
+    if (result.exitCode !== 0) throw new Error(result.output.trim() || `The resume script failed with code ${result.exitCode}`);
   }
 
   async ensureImage(spec: RuntimeSpec, onProgress: (text: string) => void): Promise<void> {
@@ -217,7 +262,7 @@ export class DockerRuntime implements Runtime {
     await this.docker.createContainer({
       name: this.config.mcContainerName,
       Image: this.imageName(spec),
-      Env: this.buildEnv(spec),
+      Env: containerEnv(spec),
       Labels: { 'maicra.managed': 'true', 'maicra.spec': await this.specHash(spec) },
       ExposedPorts: { [MINECRAFT_PORT]: {} },
       StopTimeout: 120,

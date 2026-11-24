@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../context.js';
 import { ApiError } from '../errors.js';
+import { SLEEP_AFTER_MINUTES } from '../manager.js';
 import { memoryOptions } from '../memory.js';
 import {
   JAVA_VERSIONS,
@@ -33,6 +34,8 @@ const environmentBody = z.object({
   timezone: z.string().min(1).max(64).optional(),
   memoryMb: z.number().int().optional(),
   initMemoryMb: z.number().int().optional(),
+  sleepWhenEmpty: z.boolean().optional(),
+  sleepAfterMinutes: z.number().int().optional(),
 });
 
 export async function serverRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
@@ -98,7 +101,7 @@ export async function serverRoutes(app: FastifyInstance, ctx: AppContext): Promi
   });
 
   const environment = async (): Promise<EnvironmentResponse> => {
-    const { java, timezone, memoryMb, initMemoryMb, limits } = await manager.environment();
+    const { java, timezone, memoryMb, initMemoryMb, limits, sleepWhenEmpty, sleepAfterMinutes } = await manager.environment();
     // Intl does not list "UTC" itself, and the saved zone must always be selectable.
     const timezones = [...new Set(['UTC', timezone, ...Intl.supportedValuesOf('timeZone')])];
     return {
@@ -111,6 +114,10 @@ export async function serverRoutes(app: FastifyInstance, ctx: AppContext): Promi
       memoryOptionsMb: memoryOptions(limits, memoryMb),
       hostMemoryMb: limits.hostMb,
       recommendedMemoryMb: limits.recommendedMb,
+      sleepWhenEmpty,
+      sleepAfterMinutes,
+      // The saved value stays selectable even if the list of choices changes later.
+      sleepAfterOptionsMinutes: [...new Set([...SLEEP_AFTER_MINUTES, sleepAfterMinutes])].sort((a, b) => a - b),
     };
   };
 

@@ -47,6 +47,16 @@ describe('panel api', () => {
     }
   };
 
+  const waitForSnapshot = async (description: string, matches: (snapshot: ServerSnapshot) => boolean, timeoutMs = 20_000) => {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const snapshot = (await call('GET', '/api/server')).json<ServerSnapshot>();
+      if (matches(snapshot)) return snapshot;
+      if (Date.now() > deadline) assert.fail(`Timed out waiting for ${description}`);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  };
+
   before(async () => {
     dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'maicra-test-'));
     const config = loadConfig({
@@ -303,6 +313,47 @@ describe('panel api', () => {
     await waitForStatus('online');
     assert.equal((await call('POST', '/api/server/stop')).statusCode, 202);
     await waitForStatus('offline');
+  });
+
+  test('sleeps while nobody is online and wakes for commands and before a stop', async () => {
+    const before = (await call('GET', '/api/environment')).json();
+    assert.equal(before.sleepWhenEmpty, false, 'off unless the user turns it on');
+    assert.equal(before.sleepAfterMinutes, 60);
+    assert.ok(before.sleepAfterOptionsMinutes.includes(5));
+    assert.equal((await call('PUT', '/api/environment', { sleepAfterMinutes: 7 })).statusCode, 400, 'only the offered waits');
+
+    // The fake runtime counts each minute of the wait as one second.
+    const saved = await call('PUT', '/api/environment', { sleepWhenEmpty: true, sleepAfterMinutes: 5 });
+    assert.equal(saved.statusCode, 200);
+    assert.equal(saved.json().sleepWhenEmpty, true);
+    assert.equal(saved.json().sleepAfterMinutes, 5);
+
+    assert.equal((await call('POST', '/api/server/start')).statusCode, 202);
+    const online = await waitForStatus('online');
+    assert.equal(online.sleeping, false);
+    assert.equal(online.sleepAfterMinutes, 5);
+    assert.equal((await call('PUT', '/api/environment', { sleepWhenEmpty: false })).statusCode, 409, 'only changed while offline');
+
+    const asleep = await waitForSnapshot('the server to sleep', (snapshot) => snapshot.sleeping);
+    assert.equal(asleep.status, 'online', 'a sleeping server still counts as online');
+    assert.match(asleep.detail ?? '', /sleeping/);
+
+    // A console command wakes it first and still gets its answer.
+    const output = (await call('POST', '/api/console/command', { command: 'list' })).json();
+    assert.match(output.output, /There are 0 of a max of 20 players online/);
+    assert.equal((await runtime.inspect()).sleeping, false);
+    assert.equal((await call('GET', '/api/server')).json<ServerSnapshot>().sleeping, false);
+
+    // A frozen server cannot save and shut down, so a stop wakes it first.
+    await runtime.sleepNow();
+    await waitForSnapshot('the server to sleep again', (snapshot) => snapshot.sleeping);
+    runtime.stoppedWhileSleeping = false;
+    assert.equal((await call('POST', '/api/server/stop')).statusCode, 202);
+    await waitForStatus('offline');
+    assert.equal(runtime.stoppedWhileSleeping, false, 'the server was awake when the stop reached it');
+
+    assert.equal((await call('PUT', '/api/environment', { sleepWhenEmpty: false })).statusCode, 200);
+    assert.equal(manager.snapshot().sleepAfterMinutes, null);
   });
 
   test('reinstall wipes the server and resets the software but keeps the panel settings', async () => {

@@ -46,7 +46,14 @@ test('a saved memory value wins over the default', async () => {
 test('update keeps the memory value on disk', async () => {
   await withDataDir(async (dir) => {
     const store = new StateStore(dir, { memoryMb: 2048 });
-    await store.set({ ...OLD_STATE, software: { type: 'vanilla', version: '1.21.11', java: '21' }, memoryMb: 2048, initMemoryMb: 2048 });
+    await store.set({
+      ...OLD_STATE,
+      software: { type: 'vanilla', version: '1.21.11', java: '21' },
+      memoryMb: 2048,
+      initMemoryMb: 2048,
+      sleepWhenEmpty: false,
+      sleepAfterMinutes: 60,
+    });
     await store.update({ memoryMb: 8192 });
 
     const reloaded = await new StateStore(dir, { memoryMb: 2048 }).load();
@@ -61,6 +68,17 @@ test('a state file without a minimum keeps minimum and maximum equal, like befor
 
     const state = await new StateStore(dir, { memoryMb: 2048 }).load();
     assert.equal(state?.initMemoryMb, 6144);
+  });
+});
+
+test('a state file written before the sleep option keeps the server awake', async () => {
+  await withDataDir(async (dir) => {
+    await fs.mkdir(path.join(dir, '.maicra'));
+    await fs.writeFile(path.join(dir, '.maicra', 'state.json'), JSON.stringify(OLD_STATE));
+
+    const state = await new StateStore(dir, { memoryMb: 2048 }).load();
+    assert.equal(state?.sleepWhenEmpty, false);
+    assert.equal(state?.sleepAfterMinutes, 60);
   });
 });
 

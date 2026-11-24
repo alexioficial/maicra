@@ -52,6 +52,13 @@ export interface ServerSnapshot {
   ram: RamInfo | null;
   /** True while a reinstall is deleting files. Nothing else can run until it finishes. */
   reinstalling: boolean;
+  /**
+   * True while the server is frozen because nobody was online for a while. The status stays
+   * "online": the server wakes up by itself as soon as a player connects.
+   */
+  sleeping: boolean;
+  /** Minutes without players before the server sleeps, or null when it never sleeps. */
+  sleepAfterMinutes: number | null;
   runtime: 'docker' | 'fake';
 }
 
@@ -94,6 +101,12 @@ export interface EnvironmentResponse {
   hostMemoryMb: number | null;
   /** Above this the panel warns that the system may run short of memory. */
   recommendedMemoryMb: number;
+  /** Freeze the server while nobody is online, and wake it when a player connects. */
+  sleepWhenEmpty: boolean;
+  /** Minutes without players before the server sleeps. Kept even while sleepWhenEmpty is off. */
+  sleepAfterMinutes: number;
+  /** Values offered for sleepAfterMinutes, smallest first. */
+  sleepAfterOptionsMinutes: number[];
 }
 
 export interface FileEntry {

@@ -27,6 +27,13 @@ export const STATUS_COLOR: Record<ServerStatus, string> = {
   stopping: 'var(--warn)',
 };
 
+/** A sleeping server is online for the API, but it is shown on its own so the user can tell. */
+export function statusLook(snapshot: ServerSnapshot | null): { label: string; color: string } {
+  if (snapshot?.sleeping) return { label: 'Sleeping', color: 'var(--main)' };
+  const status = snapshot?.status ?? 'offline';
+  return { label: STATUS_LABEL[status], color: STATUS_COLOR[status] };
+}
+
 /** Keeps one WebSocket open that streams the server status and console lines. */
 export function ServerProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<ServerSnapshot | null>(null);

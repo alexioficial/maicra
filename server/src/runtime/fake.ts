@@ -4,6 +4,14 @@ import type { ContainerInfo, ExecResult, LogHandle, Runtime, RuntimeSpec } from 
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/**
+ * One minute of the sleep timeout lasts this long here, so the feature can be tried and tested
+ * without waiting. The shortest option, 5 minutes, puts the fake server to sleep after 5 seconds.
+ */
+const SLEEP_MS_PER_MINUTE = 1000;
+/** Same as in the real image: after a wake without a join, the server sleeps again after 2 minutes. */
+const KNOCK_TIMEOUT_SECONDS = 120;
+
 const BOOT_LINES = [
   'Starting minecraft server version %VERSION%',
   'Loading properties',
@@ -49,11 +57,16 @@ export class FakeRuntime implements Runtime {
   private version = '';
   private runId = 0;
   private ready = false;
+  private sleepAfterSeconds: number | null = null;
+  private paused = false;
+  private sleepTimer: NodeJS.Timeout | undefined;
 
   /** For tests: how many times the server was started. */
   startCalls = 0;
   /** For tests: whether a stop reached the server before it finished loading, which a real image would ignore. */
   stoppedWhileLoading = false;
+  /** For tests: whether a stop reached a frozen server, which could not shut down cleanly. */
+  stoppedWhileSleeping = false;
 
   constructor(private readonly dataDir: string) {}
 
@@ -65,11 +78,12 @@ export class FakeRuntime implements Runtime {
       startedAt: this.startedAt,
       health: this.running ? (this.ready ? 'healthy' : 'starting') : 'none',
       specHash: this.hash,
+      sleeping: this.running && this.paused,
     };
   }
 
   async specHash(spec: RuntimeSpec): Promise<string> {
-    return JSON.stringify([spec.type, spec.version, spec.java, spec.memory, spec.initMemory, spec.timezone, spec.port]);
+    return JSON.stringify([spec.type, spec.version, spec.java, spec.memory, spec.initMemory, spec.timezone, spec.port, spec.sleepAfterSeconds]);
   }
 
   async ensureImage(_spec: RuntimeSpec, onProgress: (text: string) => void): Promise<void> {
@@ -83,6 +97,7 @@ export class FakeRuntime implements Runtime {
     this.exists = true;
     this.running = false;
     this.version = spec.version;
+    this.sleepAfterSeconds = spec.sleepAfterSeconds;
     this.hash = await this.specHash(spec);
   }
 
@@ -90,6 +105,7 @@ export class FakeRuntime implements Runtime {
     this.exists = false;
     this.running = false;
     this.ready = false;
+    this.clearSleep();
     this.startedAt = null;
     this.hash = null;
     this.lines = [];
@@ -140,7 +156,44 @@ export class FakeRuntime implements Runtime {
       if (!this.running || run !== this.runId) return;
       this.emit(`${this.stamp()} Done (3.214s)! For help, type "help"`);
       this.ready = true;
+      if (this.sleepAfterSeconds !== null) {
+        this.emit(`[Autopause loop] MC Server listening for connections - pausing in ${this.sleepAfterSeconds} seconds`);
+        this.scheduleSleep(this.sleepAfterSeconds);
+      }
     })();
+  }
+
+  /** Nobody ever joins the fake server, so it always falls asleep once the timeout passes. */
+  private scheduleSleep(seconds: number): void {
+    clearTimeout(this.sleepTimer);
+    const run = this.runId;
+    this.sleepTimer = setTimeout(() => {
+      if (run === this.runId && this.running) void this.sleepNow();
+    }, (seconds / 60) * SLEEP_MS_PER_MINUTE);
+  }
+
+  /** Freezes the server like the image does. Also a test hook to skip the wait. */
+  async sleepNow(): Promise<void> {
+    if (!this.running || this.paused) return;
+    clearTimeout(this.sleepTimer);
+    this.emit('[Autopause loop] No client connected since startup / knocked - pausing');
+    this.emit(`[${new Date().toISOString()}] [Autopause] Pausing Java process`);
+    this.paused = true;
+    await fs.writeFile(path.join(this.dataDir, '.paused'), '');
+  }
+
+  async wake(): Promise<void> {
+    if (!this.paused) return;
+    this.paused = false;
+    await fs.rm(path.join(this.dataDir, '.paused'), { force: true });
+    if (this.sleepAfterSeconds === null) return;
+    this.emit('[Autopause loop] Server was knocked - waiting for clients or timeout');
+    this.scheduleSleep(Math.min(KNOCK_TIMEOUT_SECONDS, this.sleepAfterSeconds));
+  }
+
+  private clearSleep(): void {
+    clearTimeout(this.sleepTimer);
+    this.paused = false;
   }
 
   private async seedFiles(): Promise<void> {
@@ -158,6 +211,8 @@ export class FakeRuntime implements Runtime {
   async stop(_timeoutSeconds: number): Promise<void> {
     if (!this.running) return;
     if (!this.ready) this.stoppedWhileLoading = true;
+    if (this.paused) this.stoppedWhileSleeping = true;
+    this.clearSleep();
     this.emit(`${this.stamp()} Stopping the server`);
     await sleep(600);
     this.emit(`${this.stamp()} Saving worlds`);
@@ -186,6 +241,8 @@ export class FakeRuntime implements Runtime {
 
   async exec(command: string[]): Promise<ExecResult> {
     if (!this.running) return { exitCode: 1, output: 'Server is not running' };
+    // The image wakes a frozen server when it sees an rcon client waiting, a few seconds later.
+    if (this.paused) await this.wake();
     const input = command.slice(1).join(' ').trim();
     const [name = '', ...rest] = input.split(/\s+/);
     switch (name) {

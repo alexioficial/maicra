@@ -2,7 +2,7 @@
 
 A self-hosted control panel for one Minecraft: Java Edition server, with an interface inspired by the Aternos panel. You run it on your own VPS (for example with Coolify), sign in with one email and password, and manage the server from the browser.
 
-Unlike Aternos, the server does not shut down by itself when nobody is playing. Once you start it, it stays on until you press Stop.
+Unlike Aternos, the server does not shut down by itself when nobody is playing. Once you start it, it stays on until you press Stop. If you want, it can sleep while nobody is online instead (see below), which freezes it without stopping it.
 
 ## Features
 
@@ -15,6 +15,7 @@ Unlike Aternos, the server does not shut down by itself when nobody is playing. 
 - A server card on the Options page where you write the description (MOTD) with Minecraft colors and styles and see it live, and upload the server icon (converted to the 64x64 PNG Minecraft expects)
 - Reinstall (Options page): deletes every server file (worlds, plugins, configs, player lists, logs) and goes back to a fresh install of the newest Vanilla. It only works while the server is offline and asks you to type `REINSTALL`. The panel login, the accepted EULA, the RAM and the timezone are kept
 - Mods, Plugins and Datapacks pages: each one is a folder of the server with drag and drop upload, download and delete, and no online search. **Mods** (the `mods` folder) appears only with Fabric, Quilt, NeoForge or Forge. **Plugins** (the `plugins` folder) appears only with Paper, Spigot or Purpur. **Datapacks** is always there and uses `<world>/datapacks`, where the world name comes from `level-name` in `server.properties`. Changes load on the next start (datapacks also with `/reload`)
+- Sleep when empty (Options page, off by default): after 5 minutes to 3 hours without players the server is frozen, and it wakes up the moment a player connects, so joining feels the same. It saves CPU while nobody plays, but the RAM stays reserved. It uses the autopause feature of the itzg image. A console command or Stop wakes it first. On Spigot, also raise `settings.timeout-time` in `spigot.yml`, because its watchdog cannot be switched off from outside
 - Players: whitelist, operators, banned players and banned IPs
 - File manager: browse, upload (drag and drop), download, edit text files, create, rename and delete
 
@@ -32,7 +33,7 @@ Browser ──HTTPS──> Maicra panel (Fastify + React) ──/var/run/docker.
 - Console commands, player counts and graceful shutdown use the `rcon-cli` tool inside the Minecraft container. The RCON port is never published.
 - Panel settings are kept in `/data/.maicra/state.json`. That folder is hidden from the Files page.
 - The Minecraft container uses `restart: unless-stopped`. It comes back after a crash or a VPS reboot, and stays stopped after you press Stop.
-- Options write straight to `server.properties`, and the panel does not pass property variables to the image, so your changes are not overwritten on start.
+- Options write straight to `server.properties`, and the panel does not pass property variables to the image, so your changes are not overwritten on start. The one exception is `max-tick-time`, which is set to `-1` while Sleep when empty is on: otherwise the watchdog would kill the server right after it wakes.
 
 ## Run it locally (no Docker needed)
 

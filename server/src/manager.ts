@@ -5,7 +5,7 @@ import { ApiError } from './errors.js';
 import { wipeServerFiles } from './files.js';
 import { computeLimits, describeMemory, MEMORY_STEP_MB, toMemoryArg, type MemoryLimits } from './memory.js';
 import type { ContainerInfo, LogHandle, Runtime, RuntimeSpec } from './runtime/types.js';
-import { newRconPassword, type StateStore } from './state.js';
+import { DEFAULT_SLEEP_AFTER_MINUTES, newRconPassword, type StateStore } from './state.js';
 import {
   JAVA_VERSIONS,
   type JavaVersion,
@@ -28,6 +28,8 @@ const TICK_MS = 1500;
 const PLAYERS_MS = 5000;
 const STATS_MS = 3000;
 const LOG_BUFFER_SIZE = 1000;
+/** Choices for how long the server waits without players before it sleeps. */
+export const SLEEP_AFTER_MINUTES = [5, 10, 15, 30, 60, 120, 180];
 
 const DONE_PATTERN = /\bDone \(\d+(?:[.,]\d+)?s\)!/;
 // ANSI escape sequences and Minecraft formatting codes.
@@ -95,6 +97,8 @@ export class ServerManager extends EventEmitter {
   private cancelLaunch = false;
   /** True while a stop waits for Minecraft to finish loading. */
   private waitingForStart = false;
+  /** Java is frozen by the sleep feature. Read from the runtime on every tick. */
+  private sleeping = false;
 
   constructor(
     private readonly config: Config,
@@ -115,6 +119,8 @@ export class ServerManager extends EventEmitter {
         rconPassword: newRconPassword(),
         memoryMb: this.config.mcMemoryMb,
         initMemoryMb: this.config.mcMemoryMb,
+        sleepWhenEmpty: false,
+        sleepAfterMinutes: DEFAULT_SLEEP_AFTER_MINUTES,
       });
     }
     await this.tick();
@@ -149,6 +155,10 @@ export class ServerManager extends EventEmitter {
 
   snapshot(): ServerSnapshot {
     const state = this.store.get();
+    const sleeping = this.isSleeping();
+    let players = this.status === 'online' ? this.players : null;
+    // It only falls asleep when nobody is online, and nobody can be online while it sleeps.
+    if (players && sleeping) players = { ...players, online: 0, names: [] };
     return {
       status: this.status,
       detail: this.detail(),
@@ -156,9 +166,11 @@ export class ServerManager extends EventEmitter {
       software: state.software,
       eulaAccepted: state.eulaAccepted,
       startedAt: this.runStartedAt,
-      players: this.status === 'online' ? this.players : null,
+      players,
       ram: this.runStartedAt !== null ? this.ram : null,
       reinstalling: this.reinstalling,
+      sleeping,
+      sleepAfterMinutes: state.sleepWhenEmpty ? state.sleepAfterMinutes : null,
       runtime: this.runtime.kind,
     };
   }
@@ -173,6 +185,8 @@ export class ServerManager extends EventEmitter {
     memoryMb: number;
     initMemoryMb: number;
     limits: MemoryLimits;
+    sleepWhenEmpty: boolean;
+    sleepAfterMinutes: number;
   }> {
     const state = this.store.get();
     return {
@@ -181,6 +195,8 @@ export class ServerManager extends EventEmitter {
       memoryMb: state.memoryMb,
       initMemoryMb: state.initMemoryMb,
       limits: await this.memoryLimits(),
+      sleepWhenEmpty: state.sleepWhenEmpty,
+      sleepAfterMinutes: state.sleepAfterMinutes,
     };
   }
 
@@ -195,6 +211,10 @@ export class ServerManager extends EventEmitter {
 
   isOnline(): boolean {
     return this.status === 'online';
+  }
+
+  private isSleeping(): boolean {
+    return this.status === 'online' && this.transition === null && this.sleeping;
   }
 
   /** True while the data folder may be changed safely by the panel. */
@@ -219,7 +239,7 @@ export class ServerManager extends EventEmitter {
         if (this.waitingForStart) return 'Waiting for the server to finish loading, then stopping it safely';
         return 'Saving and shutting down';
       case 'online':
-        return null;
+        return this.isSleeping() ? 'Nobody is online, so it is sleeping. It wakes up when a player connects.' : null;
     }
   }
 
@@ -236,6 +256,7 @@ export class ServerManager extends EventEmitter {
       port: this.config.mcPort,
       uid: this.config.mcUid,
       gid: this.config.mcGid,
+      sleepAfterSeconds: state.sleepWhenEmpty ? state.sleepAfterMinutes * 60 : null,
     };
   }
 
@@ -270,6 +291,7 @@ export class ServerManager extends EventEmitter {
     try {
       const info = await this.runtime.inspect();
       const running = info.exists && (info.running || info.restarting);
+      this.sleeping = running && info.sleeping;
 
       if (running) {
         if (info.startedAt !== this.runStartedAt) {
@@ -338,7 +360,8 @@ export class ServerManager extends EventEmitter {
   }
 
   private async pollPlayers(): Promise<void> {
-    if (this.status !== 'online') return;
+    // The image wakes a sleeping server whenever an rcon client is waiting, so asking would wake it.
+    if (this.status !== 'online' || this.sleeping) return;
     try {
       const result = await this.runtime.exec(['rcon-cli', 'list']);
       const parsed = result.exitCode === 0 ? parsePlayerList(result.output) : null;
@@ -431,8 +454,30 @@ export class ServerManager extends EventEmitter {
       }
     }
     if (!info.running && !info.restarting) return; // It ended by itself while we waited.
+    const ready = this.isReady(info);
+    // A frozen Java process cannot save and shut down, so Docker would kill it at the timeout.
+    // Waking costs nothing when it is not asleep, so it is always done.
+    if (ready) await this.wake();
     // If it never finished loading, it is stuck. Give it a short moment, then Docker ends it.
-    await this.runtime.stop(this.isReady(info) ? STOP_TIMEOUT_SECONDS : FORCE_STOP_SECONDS);
+    await this.runtime.stop(ready ? STOP_TIMEOUT_SECONDS : FORCE_STOP_SECONDS);
+  }
+
+  /**
+   * Unfreezes the server before something that needs it awake. Without this the image would
+   * still wake it for an rcon command, but only a few seconds later.
+   */
+  private async wake(): Promise<void> {
+    try {
+      await this.runtime.wake();
+    } catch (error) {
+      // An image without the resume script still wakes up for rcon commands by itself.
+      if (this.sleeping) this.pushLog('sys', `Could not wake the server: ${(error as Error).message}`);
+      return;
+    }
+    if (this.sleeping) {
+      this.sleeping = false;
+      this.publish();
+    }
   }
 
   private isReady(info: ContainerInfo): boolean {
@@ -547,7 +592,14 @@ export class ServerManager extends EventEmitter {
     this.publish();
   }
 
-  async setEnvironment(patch: { java?: JavaVersion; timezone?: string; memoryMb?: number; initMemoryMb?: number }): Promise<void> {
+  async setEnvironment(patch: {
+    java?: JavaVersion;
+    timezone?: string;
+    memoryMb?: number;
+    initMemoryMb?: number;
+    sleepWhenEmpty?: boolean;
+    sleepAfterMinutes?: number;
+  }): Promise<void> {
     this.requireOffline();
     const state = this.store.get();
     const memoryMb = patch.memoryMb ?? state.memoryMb;
@@ -583,11 +635,16 @@ export class ServerManager extends EventEmitter {
         throw new ApiError(400, 'invalid_timezone', 'Unknown timezone');
       }
     }
+    if (patch.sleepAfterMinutes !== undefined && !SLEEP_AFTER_MINUTES.includes(patch.sleepAfterMinutes)) {
+      throw new ApiError(400, 'invalid_sleep', `The wait before sleeping must be one of ${SLEEP_AFTER_MINUTES.join(', ')} minutes`);
+    }
     await this.store.update({
       software: { ...state.software, java: patch.java ?? state.software.java },
       timezone: patch.timezone ?? state.timezone,
       memoryMb,
       initMemoryMb,
+      sleepWhenEmpty: patch.sleepWhenEmpty ?? state.sleepWhenEmpty,
+      sleepAfterMinutes: patch.sleepAfterMinutes ?? state.sleepAfterMinutes,
     });
     this.publish();
   }
@@ -601,6 +658,7 @@ export class ServerManager extends EventEmitter {
     if (command === '') return '';
 
     this.pushLog('cmd', `> ${command}`);
+    if (this.sleeping) await this.wake();
     const result = await this.runtime.exec(['rcon-cli', command]);
     const output = stripCodes(result.output).trim();
     for (const line of output === '' ? [] : output.split('\n')) this.pushLog('out', line);
@@ -610,6 +668,7 @@ export class ServerManager extends EventEmitter {
   /** Runs a console command without echoing it, for features such as the player lists. */
   async runSilent(command: string): Promise<string> {
     if (this.status !== 'online') throw new ApiError(409, 'not_online', 'The server must be online');
+    if (this.sleeping) await this.wake();
     const result = await this.runtime.exec(['rcon-cli', command]);
     return stripCodes(result.output).trim();
   }
