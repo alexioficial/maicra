@@ -169,6 +169,28 @@ describe('panel api', () => {
     assert.match(tooMuch.json().message, /most you can give/);
     assert.equal((await call('GET', '/api/environment')).json().memoryMb, 4096, 'rejected values change nothing');
 
+    // The minimum starts like the old behaviour (same as the maximum) and can be lowered on its own.
+    assert.equal((await call('GET', '/api/environment')).json().initMemoryMb, 2048);
+    const lowered = await call('PUT', '/api/environment', { initMemoryMb: 1024 });
+    assert.equal(lowered.statusCode, 200);
+    assert.equal(lowered.json().initMemoryMb, 1024);
+    assert.equal(lowered.json().memoryMb, 4096, 'the maximum is untouched');
+
+    assert.equal((await call('PUT', '/api/environment', { initMemoryMb: 512 })).statusCode, 400, 'below the least allowed');
+    assert.equal((await call('PUT', '/api/environment', { initMemoryMb: 1500 })).statusCode, 400, 'not a multiple of 256');
+    const aboveMax = await call('PUT', '/api/environment', { initMemoryMb: 5120 });
+    assert.equal(aboveMax.statusCode, 400);
+    assert.match(aboveMax.json().message, /cannot be higher than the maximum/);
+    assert.equal((await call('GET', '/api/environment')).json().initMemoryMb, 1024, 'rejected values change nothing');
+
+    // Lowering the maximum below the minimum brings the minimum down with it.
+    await call('PUT', '/api/environment', { initMemoryMb: 3072 });
+    const squeezed = await call('PUT', '/api/environment', { memoryMb: 2048 });
+    assert.equal(squeezed.statusCode, 200);
+    assert.equal(squeezed.json().initMemoryMb, 2048);
+    assert.equal((await call('PUT', '/api/environment', { memoryMb: 2048, initMemoryMb: 3072 })).statusCode, 400, 'minimum above the new maximum');
+    await call('PUT', '/api/environment', { memoryMb: 4096 });
+
     // The next container is built with the new size, so Minecraft starts with it.
     assert.equal(manager.snapshot().software.java, '21');
   });

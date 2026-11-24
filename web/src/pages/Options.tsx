@@ -115,7 +115,7 @@ export function OptionsPage() {
   const offline = snapshot?.status === 'offline';
   const canReinstall = offline && !snapshot?.reinstalling;
 
-  const saveEnvironment = async (patch: { java?: string; timezone?: string; memoryMb?: number }) => {
+  const saveEnvironment = async (patch: { java?: string; timezone?: string; memoryMb?: number; initMemoryMb?: number }) => {
     try {
       environment.setData(await api.put<EnvironmentResponse>('/api/environment', patch));
       toast.success('Saved. It applies the next time the server starts.');
@@ -130,6 +130,12 @@ export function OptionsPage() {
   const promptField = FIELDS.find((field) => field.key === 'resource-pack-prompt')!;
   const promptRaw = rawValue(promptField.key, promptField.fallback);
   const prompt = readJsonText(promptRaw);
+
+  // The minimum can never be above the maximum. The saved value stays listed so it never disappears.
+  const env = environment.data;
+  const minimumOptions = env
+    ? [...new Set([...env.memoryOptionsMb.filter((megabytes) => megabytes <= env.memoryMb), env.initMemoryMb])].sort((a, b) => a - b)
+    : [];
 
   return (
     <div className="stack">
@@ -248,6 +254,27 @@ export function OptionsPage() {
                 This machine has {formatMemory(environment.data.hostMemoryMb)} in total. Recommended maximum: {formatMemory(environment.data.recommendedMemoryMb)}.
               </span>
             ) : null}
+          </div>
+          <div className="field">
+            <label className="field-label" htmlFor="opt-ram-min">
+              Minimum RAM
+            </label>
+            <select
+              id="opt-ram-min"
+              className="input"
+              value={environment.data.initMemoryMb}
+              disabled={!offline}
+              onChange={(event) => void saveEnvironment({ initMemoryMb: Number(event.target.value) })}
+            >
+              {minimumOptions.map((megabytes) => (
+                <option key={megabytes} value={megabytes}>
+                  {formatMemory(megabytes)}
+                </option>
+              ))}
+            </select>
+            <span className="field-hint">
+              Java starts with this much and grows up to the maximum when it needs more. The same value as the maximum avoids pauses while it grows.
+            </span>
           </div>
           {environment.data.hostMemoryMb !== null && environment.data.memoryMb > environment.data.recommendedMemoryMb ? (
             <div className="notice" style={{ flex: '1 1 100%' }}>

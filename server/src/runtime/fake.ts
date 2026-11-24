@@ -69,7 +69,7 @@ export class FakeRuntime implements Runtime {
   }
 
   async specHash(spec: RuntimeSpec): Promise<string> {
-    return JSON.stringify([spec.type, spec.version, spec.java, spec.memory, spec.timezone, spec.port]);
+    return JSON.stringify([spec.type, spec.version, spec.java, spec.memory, spec.initMemory, spec.timezone, spec.port]);
   }
 
   async ensureImage(_spec: RuntimeSpec, onProgress: (text: string) => void): Promise<void> {

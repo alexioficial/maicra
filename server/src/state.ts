@@ -11,9 +11,14 @@ export interface PanelState {
   rconPassword: string;
   /** Maximum Java heap in megabytes. */
   memoryMb: number;
+  /** Initial (minimum) Java heap in megabytes. Never above memoryMb. */
+  initMemoryMb: number;
 }
 
-/** Older state files have no memory value. They get the default, which is the MC_MEMORY setting. */
+/**
+ * Older state files have no memory value. They get the default, which is the MC_MEMORY setting.
+ * Files written before the minimum RAM option have no initMemoryMb, see withInitMemory.
+ */
 function buildSchema(defaultMemoryMb: number) {
   return z.object({
     eulaAccepted: z.boolean(),
@@ -25,7 +30,16 @@ function buildSchema(defaultMemoryMb: number) {
     timezone: z.string().min(1),
     rconPassword: z.string().min(8),
     memoryMb: z.number().int().min(256).default(defaultMemoryMb),
+    initMemoryMb: z.number().int().min(256).optional(),
   });
+}
+
+/**
+ * A state file without a minimum keeps the old behaviour, where minimum and maximum were the same.
+ * A minimum above the maximum would make Java refuse to start, so it is lowered to the maximum.
+ */
+function withInitMemory(parsed: z.infer<ReturnType<typeof buildSchema>>): PanelState {
+  return { ...parsed, initMemoryMb: Math.min(parsed.initMemoryMb ?? parsed.memoryMb, parsed.memoryMb) };
 }
 
 export const HIDDEN_DIR = '.maicra';
@@ -57,8 +71,8 @@ export class StateStore {
     if (!parsed.success) {
       throw new Error(`State file ${this.file} is invalid: ${parsed.error.message}`);
     }
-    this.current = parsed.data;
-    return parsed.data;
+    this.current = withInitMemory(parsed.data);
+    return this.current;
   }
 
   get(): PanelState {

@@ -5,7 +5,10 @@ export interface RuntimeSpec {
   type: SoftwareType;
   version: string;
   java: JavaVersion;
+  /** Maximum heap, the MEMORY variable of the image. */
   memory: string;
+  /** Initial heap, the INIT_MEMORY variable of the image. */
+  initMemory: string;
   timezone: string;
   rconPassword: string;
   port: number;

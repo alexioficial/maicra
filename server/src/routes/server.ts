@@ -32,6 +32,7 @@ const environmentBody = z.object({
   java: z.enum(JAVA_VERSIONS).optional(),
   timezone: z.string().min(1).max(64).optional(),
   memoryMb: z.number().int().optional(),
+  initMemoryMb: z.number().int().optional(),
 });
 
 export async function serverRoutes(app: FastifyInstance, ctx: AppContext): Promise<void> {
@@ -97,7 +98,7 @@ export async function serverRoutes(app: FastifyInstance, ctx: AppContext): Promi
   });
 
   const environment = async (): Promise<EnvironmentResponse> => {
-    const { java, timezone, memoryMb, limits } = await manager.environment();
+    const { java, timezone, memoryMb, initMemoryMb, limits } = await manager.environment();
     // Intl does not list "UTC" itself, and the saved zone must always be selectable.
     const timezones = [...new Set(['UTC', timezone, ...Intl.supportedValuesOf('timeZone')])];
     return {
@@ -106,6 +107,7 @@ export async function serverRoutes(app: FastifyInstance, ctx: AppContext): Promi
       timezone,
       timezones,
       memoryMb,
+      initMemoryMb,
       memoryOptionsMb: memoryOptions(limits, memoryMb),
       hostMemoryMb: limits.hostMb,
       recommendedMemoryMb: limits.recommendedMb,

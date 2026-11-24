@@ -101,6 +101,8 @@ export class DockerRuntime implements Runtime {
       TYPE: ITZG_TYPE[spec.type],
       VERSION: spec.version,
       MEMORY: spec.memory,
+      // Without this the image uses MEMORY for the initial heap too.
+      INIT_MEMORY: spec.initMemory,
       TZ: spec.timezone,
       UID: String(spec.uid),
       GID: String(spec.gid),

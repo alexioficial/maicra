@@ -114,6 +114,7 @@ export class ServerManager extends EventEmitter {
         timezone: this.config.timezone,
         rconPassword: newRconPassword(),
         memoryMb: this.config.mcMemoryMb,
+        initMemoryMb: this.config.mcMemoryMb,
       });
     }
     await this.tick();
@@ -166,9 +167,21 @@ export class ServerManager extends EventEmitter {
     return [...this.logs];
   }
 
-  async environment(): Promise<{ java: JavaVersion; timezone: string; memoryMb: number; limits: MemoryLimits }> {
+  async environment(): Promise<{
+    java: JavaVersion;
+    timezone: string;
+    memoryMb: number;
+    initMemoryMb: number;
+    limits: MemoryLimits;
+  }> {
     const state = this.store.get();
-    return { java: state.software.java, timezone: state.timezone, memoryMb: state.memoryMb, limits: await this.memoryLimits() };
+    return {
+      java: state.software.java,
+      timezone: state.timezone,
+      memoryMb: state.memoryMb,
+      initMemoryMb: state.initMemoryMb,
+      limits: await this.memoryLimits(),
+    };
   }
 
   /** How much memory the server may be given on this machine. The machine's size does not change, so it is read once. */
@@ -217,6 +230,7 @@ export class ServerManager extends EventEmitter {
       version: state.software.version,
       java: state.software.java,
       memory: toMemoryArg(state.memoryMb),
+      initMemory: toMemoryArg(state.initMemoryMb),
       timezone: state.timezone,
       rconPassword: state.rconPassword,
       port: this.config.mcPort,
@@ -533,17 +547,30 @@ export class ServerManager extends EventEmitter {
     this.publish();
   }
 
-  async setEnvironment(patch: { java?: JavaVersion; timezone?: string; memoryMb?: number }): Promise<void> {
+  async setEnvironment(patch: { java?: JavaVersion; timezone?: string; memoryMb?: number; initMemoryMb?: number }): Promise<void> {
     this.requireOffline();
     const state = this.store.get();
-    if (patch.memoryMb !== undefined) {
+    const memoryMb = patch.memoryMb ?? state.memoryMb;
+    // Lowering the maximum below the saved minimum lowers the minimum with it, so the pair stays valid.
+    const initMemoryMb = patch.initMemoryMb ?? Math.min(state.initMemoryMb, memoryMb);
+    if (patch.memoryMb !== undefined || patch.initMemoryMb !== undefined) {
       const limits = await this.memoryLimits();
-      if (!Number.isInteger(patch.memoryMb) || patch.memoryMb % MEMORY_STEP_MB !== 0 || patch.memoryMb < limits.minMb) {
-        throw new ApiError(400, 'invalid_memory', `RAM must be at least ${describeMemory(limits.minMb)}, in steps of ${MEMORY_STEP_MB} MB`);
+      if (patch.memoryMb !== undefined) {
+        if (!Number.isInteger(patch.memoryMb) || patch.memoryMb % MEMORY_STEP_MB !== 0 || patch.memoryMb < limits.minMb) {
+          throw new ApiError(400, 'invalid_memory', `RAM must be at least ${describeMemory(limits.minMb)}, in steps of ${MEMORY_STEP_MB} MB`);
+        }
+        if (patch.memoryMb > limits.maxMb) {
+          const machine = limits.hostMb === null ? '' : `This machine has ${describeMemory(limits.hostMb)} in total. `;
+          throw new ApiError(400, 'invalid_memory', `${machine}The most you can give the server is ${describeMemory(limits.maxMb)}, so the system keeps some memory.`);
+        }
       }
-      if (patch.memoryMb > limits.maxMb) {
-        const machine = limits.hostMb === null ? '' : `This machine has ${describeMemory(limits.hostMb)} in total. `;
-        throw new ApiError(400, 'invalid_memory', `${machine}The most you can give the server is ${describeMemory(limits.maxMb)}, so the system keeps some memory.`);
+      if (patch.initMemoryMb !== undefined) {
+        if (!Number.isInteger(patch.initMemoryMb) || patch.initMemoryMb % MEMORY_STEP_MB !== 0 || patch.initMemoryMb < limits.minMb) {
+          throw new ApiError(400, 'invalid_memory', `Minimum RAM must be at least ${describeMemory(limits.minMb)}, in steps of ${MEMORY_STEP_MB} MB`);
+        }
+        if (patch.initMemoryMb > memoryMb) {
+          throw new ApiError(400, 'invalid_memory', `Minimum RAM cannot be higher than the maximum, which is ${describeMemory(memoryMb)}`);
+        }
       }
     }
     if (patch.java !== undefined && !JAVA_VERSIONS.includes(patch.java)) {
@@ -559,7 +586,8 @@ export class ServerManager extends EventEmitter {
     await this.store.update({
       software: { ...state.software, java: patch.java ?? state.software.java },
       timezone: patch.timezone ?? state.timezone,
-      memoryMb: patch.memoryMb ?? state.memoryMb,
+      memoryMb,
+      initMemoryMb,
     });
     this.publish();
   }

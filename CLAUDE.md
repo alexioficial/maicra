@@ -21,7 +21,7 @@ Done and working against real Docker (the user ran Paper 1.21.1 with 6 GB of RAM
 - Start, stop, restart, live status, players, RAM and uptime, EULA modal on the first start
 - Live console with commands, latest log with download
 - Software and version picker for Vanilla, Snapshot, Paper, Spigot, Purpur, Fabric, Quilt, NeoForge and Forge, with the Java version chosen automatically
-- Options page (17 `server.properties` fields, MOTD editor with colors, server icon upload, timezone, Java version, maximum RAM) and a Reinstall button
+- Options page (17 `server.properties` fields, MOTD editor with colors, server icon upload, timezone, Java version, maximum and minimum RAM) and a Reinstall button
 - Properties page: a raw text editor for `server.properties` with a manual Save button (no autosave, no validation)
 - Players (whitelist, operators, bans), Files (full file manager)
 - Mods, Plugins and Datapacks pages (a folder with upload, download and delete)
@@ -104,7 +104,7 @@ Browser ──HTTPS──> Maicra panel (Fastify + React) ──/var/run/docker.
 
 ### Facts about the itzg image that shaped the design (checked in its source)
 
-- Property variables are applied to `server.properties` only when set. The panel passes only `EULA`, `TYPE`, `VERSION`, `MEMORY`, `TZ`, `UID`, `GID` and `RCON_PASSWORD`, so edits made in the Options page survive every restart. **Do not add variables such as `MOTD`, `DIFFICULTY` or `MAX_PLAYERS`**, they would overwrite the user's edits on each start.
+- Property variables are applied to `server.properties` only when set. The panel passes only `EULA`, `TYPE`, `VERSION`, `MEMORY`, `INIT_MEMORY`, `TZ`, `UID`, `GID` and `RCON_PASSWORD`, so edits made in the Options page survive every restart. **Do not add variables such as `MOTD`, `DIFFICULTY` or `MAX_PLAYERS`**, they would overwrite the user's edits on each start.
 - The RCON password is random on every start unless `RCON_PASSWORD` is set. The panel pins one in `state.json`; otherwise `rcon-cli` would stop matching the file.
 - The image has a healthcheck (`mc-health`, start period 2 minutes). The panel treats the server as online when it sees the `Done (x.xxxs)!` log line, with `healthy` as a fallback.
 - **A stop sent while Minecraft is still loading is ignored by the image**, and Docker kills the server after the timeout (exit code 137). The panel therefore waits until the server is ready before stopping it (section 5).
@@ -138,7 +138,7 @@ Version lists are fetched and cached for 15 minutes: Vanilla and Snapshot from t
 
 ### Memory (`memory.ts`)
 
-The user can set the maximum RAM from Options. Minimum 1 GB, step 256 MB, maximum is the machine's memory minus 1 GB (read from `docker info`), and the page warns above 75 % of the machine. The setting is stored in `state.json`; `MC_MEMORY` is only the default for a fresh install and for old state files without the field. The image's `MEMORY` variable sets the minimum and maximum heap to the same value.
+The user can set the maximum RAM from Options. Minimum 1 GB, step 256 MB, maximum is the machine's memory minus 1 GB (read from `docker info`), and the page warns above 75 % of the machine. The setting is stored in `state.json`; `MC_MEMORY` is only the default for a fresh install and for old state files without the field. In the image, `MEMORY` is the maximum heap (`-Xmx`) and also the initial heap (`-Xms`) unless `INIT_MEMORY` is set (checked in its `start-configuration` script: `INIT_MEMORY` defaults to `MEMORY`). The panel always passes both, so the minimum RAM is a separate option in Options (`initMemoryMb` in `state.json`, same step and lower bound, never above the maximum). Lowering the maximum below the saved minimum lowers the minimum with it, and a state file without the field gets a minimum equal to the maximum, which is how it behaved before.
 
 ### Files (`files.ts`)
 

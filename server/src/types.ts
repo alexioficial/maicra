@@ -86,6 +86,8 @@ export interface EnvironmentResponse {
   timezones: string[];
   /** Maximum Java heap in megabytes. */
   memoryMb: number;
+  /** Initial (minimum) Java heap in megabytes. Never above memoryMb. */
+  initMemoryMb: number;
   /** Sizes offered in the picker, in megabytes, smallest first. */
   memoryOptionsMb: number[];
   /** Total memory of the machine in megabytes, or null if unknown. */
