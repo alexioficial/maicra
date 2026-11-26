@@ -87,10 +87,6 @@ export interface SoftwareResponse {
 }
 
 export interface EnvironmentResponse {
-  /** Public TCP port published by Docker. Minecraft listens on 25565 inside the container. */
-  port: number;
-  /** Domain or IP shown to players, without a port or protocol. */
-  publicAddress: string;
   java: JavaVersion;
   javaVersions: JavaVersion[];
   timezone: string;

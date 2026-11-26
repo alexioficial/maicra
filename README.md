@@ -12,7 +12,6 @@ Unlike Aternos, the server does not shut down by itself when nobody is playing. 
 - Software and version picker: Vanilla, Snapshot, Paper, Spigot, Purpur, Fabric, Quilt, NeoForge and Forge. The right Java version is chosen from Mojang's own data
 - Options page that edits `server.properties` (slots, gamemode, difficulty, whitelist, cracked mode, PVP, command blocks, fly, animals, monsters, villagers, nether, spawn protection, resource pack and more), plus timezone, Java version and the maximum and minimum RAM. The RAM picker only offers sizes the machine can give (it keeps 1 GB free for the system) and warns above 75% of the machine's memory. A change applies on the next start
 - Properties page: edit the whole `server.properties` file as plain text and save it with a button (no autosave, no checks, so a typo is on you)
-- Connection settings in Options: save a public domain or IP and a TCP port while the server is offline. Addresses use `host:port` for custom ports and omit the default port 25565. Allow the chosen port in the VPS firewall. These settings take precedence over `MC_PUBLIC_ADDRESS` and `MC_PORT` once saved. Minecraft keeps port 25565 inside its container; the panel repairs a conflicting `server-port` property before starting it.
 - A server card on the Options page where you write the description (MOTD) with Minecraft colors and styles and see it live, and upload the server icon (converted to the 64x64 PNG Minecraft expects)
 - Reinstall (Options page): deletes every server file (worlds, plugins, configs, player lists, logs) and goes back to a fresh install of the newest Vanilla. It only works while the server is offline and asks you to type `REINSTALL`. The panel login, the accepted EULA, the RAM and the timezone are kept
 - Mods, Plugins and Datapacks pages: each one is a folder of the server with drag and drop upload, download and delete, and no online search. **Mods** (the `mods` folder) appears only with Fabric, Quilt, NeoForge or Forge. **Plugins** (the `plugins` folder) appears only with Paper, Spigot or Purpur. **Datapacks** is always there and uses `<world>/datapacks`, where the world name comes from `level-name` in `server.properties`. Changes load on the next start (datapacks also with `/reload`)
@@ -60,8 +59,6 @@ Useful commands: `npm test --workspace server`, `npm run typecheck`, `npm run bu
 6. Deploy, sign in, press Start and accept the EULA. The first start downloads the Minecraft image, which takes a few minutes.
 
 If another Minecraft server on the same VPS already uses port 25565, set `MC_PORT` to a different port or stop the other server first.
-
-Cloudflare's normal orange-cloud proxy supports the web panel, but not Minecraft connections. Players can use the VPS IP or a separate DNS-only (grey-cloud) domain. Hiding the game's origin IP requires a compatible game proxy, such as Cloudflare Spectrum; adding a port to an orange-cloud domain does not make it work for Minecraft.
 
 ### Environment variables
 

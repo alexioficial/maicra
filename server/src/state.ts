@@ -2,7 +2,6 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
-import { portSchema, publicAddressSchema } from './connection.js';
 import { JAVA_VERSIONS, SOFTWARE_TYPES, type SoftwareInfo } from './types.js';
 
 export interface PanelState {
@@ -18,9 +17,6 @@ export interface PanelState {
   sleepWhenEmpty: boolean;
   /** Minutes without players before the server is frozen. */
   sleepAfterMinutes: number;
-  /** Null keeps the environment default until a connection setting is saved in Options. */
-  port: number | null;
-  publicAddress: string | null;
 }
 
 /** The image's own default for the autopause timeout is one hour as well. */
@@ -45,8 +41,6 @@ function buildSchema(defaultMemoryMb: number) {
     initMemoryMb: z.number().int().min(256).optional(),
     sleepWhenEmpty: z.boolean().default(false),
     sleepAfterMinutes: z.number().int().min(1).default(DEFAULT_SLEEP_AFTER_MINUTES),
-    port: portSchema.nullable().default(null),
-    publicAddress: publicAddressSchema.nullable().default(null),
   });
 }
 
