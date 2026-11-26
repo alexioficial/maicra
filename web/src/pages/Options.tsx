@@ -146,6 +146,10 @@ export function OptionsPage() {
 
   return (
     <div className="stack">
+      {environment.data ? (
+        <ConnectionSettings environment={environment.data} offline={canReinstall} onSaved={environment.setData} />
+      ) : null}
+      {environment.error ? <div className="notice">{environment.error}</div> : null}
       {properties.error ? <div className="notice">{properties.error}</div> : null}
       {properties.loading && !properties.data ? (
         <div className="loading">
@@ -531,6 +535,86 @@ interface ControlProps {
   prompt: string;
   onChange: (raw: string) => void;
   onEditRich: () => void;
+}
+
+function ConnectionSettings({ environment, offline, onSaved }: {
+  environment: EnvironmentResponse;
+  offline: boolean;
+  onSaved: (value: EnvironmentResponse) => void;
+}) {
+  const toast = useToast();
+  const [draft, setDraft] = useState<{ publicAddress: string; port: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const values = draft ?? { publicAddress: environment.publicAddress, port: String(environment.port) };
+  const dirty = values.publicAddress !== environment.publicAddress || values.port !== String(environment.port);
+
+  const save = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!offline || saving || !dirty) return;
+    setSaving(true);
+    try {
+      onSaved(await api.put<EnvironmentResponse>('/api/environment', {
+        publicAddress: values.publicAddress.trim(),
+        port: Number(values.port),
+      }));
+      setDraft(null);
+      toast.success('Connection saved. The port applies the next time the server starts.');
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="stack" aria-labelledby="connection-heading">
+      <h2 id="connection-heading" className="section-title">Connection</h2>
+      <form className="row-fields" onSubmit={(event) => void save(event)}>
+        <div className="field">
+          <label className="field-label" htmlFor="opt-public-address">Server address</label>
+          <input
+            id="opt-public-address"
+            className="input"
+            value={values.publicAddress}
+            disabled={!offline || saving}
+            required
+            maxLength={253}
+            placeholder="play.example.com or 203.0.113.10"
+            autoCapitalize="none"
+            spellCheck={false}
+            aria-describedby="address-hint"
+            onChange={(event) => setDraft({ ...values, publicAddress: event.target.value })}
+          />
+          <span id="address-hint" className="field-hint">The IP or domain players use. Enter it without a port or https://.</span>
+        </div>
+        <div className="field">
+          <label className="field-label" htmlFor="opt-port">Server port</label>
+          <input
+            id="opt-port"
+            className="input"
+            type="number"
+            min={1}
+            max={65535}
+            step={1}
+            required
+            value={values.port}
+            disabled={!offline || saving}
+            aria-describedby="port-hint"
+            onChange={(event) => setDraft({ ...values, port: event.target.value })}
+          />
+          <span id="port-hint" className="field-hint">Default: 25565. Other ports appear as address:port. Allow the chosen TCP port in your VPS firewall.</span>
+        </div>
+        <div className="field connection-save">
+          <Button type="submit" busy={saving} disabled={!offline || !dirty}>Save connection</Button>
+          {!offline ? <span className="field-hint">Stop the server before changing its connection settings.</span> : null}
+        </div>
+      </form>
+      <p className="field-hint">
+        The port is managed here. Minecraft uses port 25565 internally, so changing server-port in Properties does not change the public port.
+        {' '}Cloudflare's orange-cloud proxy supports the web panel, but Minecraft needs a direct IP, a DNS-only domain, or a compatible game proxy.
+      </p>
+    </section>
+  );
 }
 
 function Control({ field, raw, prompt, onChange, onEditRich }: ControlProps) {

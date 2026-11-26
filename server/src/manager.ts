@@ -1,8 +1,10 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import type { Config } from './config.js';
+import { addressHost, formatAddress, MINECRAFT_PORT, portSchema, publicAddressSchema } from './connection.js';
 import { ApiError } from './errors.js';
-import { wipeServerFiles } from './files.js';
+import { FileService, wipeServerFiles } from './files.js';
+import { applyProperties, parseProperties } from './properties.js';
 import { computeLimits, describeMemory, MEMORY_STEP_MB, toMemoryArg, type MemoryLimits } from './memory.js';
 import type { ContainerInfo, LogHandle, Runtime, RuntimeSpec } from './runtime/types.js';
 import { DEFAULT_SLEEP_AFTER_MINUTES, newRconPassword, type StateStore } from './state.js';
@@ -121,6 +123,8 @@ export class ServerManager extends EventEmitter {
         initMemoryMb: this.config.mcMemoryMb,
         sleepWhenEmpty: false,
         sleepAfterMinutes: DEFAULT_SLEEP_AFTER_MINUTES,
+        port: null,
+        publicAddress: null,
       });
     }
     await this.tick();
@@ -187,6 +191,8 @@ export class ServerManager extends EventEmitter {
     limits: MemoryLimits;
     sleepWhenEmpty: boolean;
     sleepAfterMinutes: number;
+    port: number;
+    publicAddress: string;
   }> {
     const state = this.store.get();
     return {
@@ -197,6 +203,8 @@ export class ServerManager extends EventEmitter {
       limits: await this.memoryLimits(),
       sleepWhenEmpty: state.sleepWhenEmpty,
       sleepAfterMinutes: state.sleepAfterMinutes,
+      port: state.port ?? this.config.mcPort,
+      publicAddress: state.publicAddress ?? addressHost(this.config.mcPublicAddress ?? 'localhost'),
     };
   }
 
@@ -223,9 +231,15 @@ export class ServerManager extends EventEmitter {
   }
 
   private address(): string {
-    const host = this.config.mcPublicAddress ?? 'localhost';
-    if (host.includes(':') || this.config.mcPort === 25565) return host;
-    return `${host}:${this.config.mcPort}`;
+    const state = this.store.get();
+    // Existing deployments may advertise a forwarded port different from MC_PORT. Keep their
+    // complete address until the owner explicitly saves a connection setting in Options.
+    if (state.publicAddress === null && state.port === null && this.config.mcPublicAddress &&
+        addressHost(this.config.mcPublicAddress) !== this.config.mcPublicAddress) {
+      return this.config.mcPublicAddress;
+    }
+    const host = state.publicAddress ?? addressHost(this.config.mcPublicAddress ?? 'localhost');
+    return formatAddress(host, state.port ?? this.config.mcPort);
   }
 
   private detail(): string | null {
@@ -253,7 +267,7 @@ export class ServerManager extends EventEmitter {
       initMemory: toMemoryArg(state.initMemoryMb),
       timezone: state.timezone,
       rconPassword: state.rconPassword,
-      port: this.config.mcPort,
+      port: state.port ?? this.config.mcPort,
       uid: this.config.mcUid,
       gid: this.config.mcGid,
       sleepAfterSeconds: state.sleepWhenEmpty ? state.sleepAfterMinutes * 60 : null,
@@ -523,6 +537,17 @@ export class ServerManager extends EventEmitter {
       }
       this.throwIfCancelled();
       this.setProgress('Starting the server');
+      // Docker forwards the public port to 25565. A raw property edit must not break that mapping
+      // or the image's health check and autopause, which also use the internal port.
+      const files = new FileService(this.config.dataDir, this.config.mcUid, this.config.mcGid);
+      const raw = await files.readRaw('/server.properties');
+      if (raw !== null && parseProperties(raw)['server-port'] !== String(MINECRAFT_PORT)) {
+        // Java uses the last duplicate key, so repair every occurrence as well as adding a missing key.
+        const updated = applyProperties(raw, { 'server-port': String(MINECRAFT_PORT) })
+          .replace(/^[ \t]*server-port[ \t]*=[^\r\n]*/gm, `server-port=${MINECRAFT_PORT}`);
+        await files.writeText('/server.properties', updated);
+      }
+      this.throwIfCancelled();
       await this.runtime.start();
       // Stop was pressed while the container was being started. It is running now, so stop it properly.
       if (this.cancelLaunch) await this.stopGracefully();
@@ -599,9 +624,13 @@ export class ServerManager extends EventEmitter {
     initMemoryMb?: number;
     sleepWhenEmpty?: boolean;
     sleepAfterMinutes?: number;
+    port?: number;
+    publicAddress?: string;
   }): Promise<void> {
     this.requireOffline();
     const state = this.store.get();
+    const port = patch.port === undefined ? state.port : portSchema.parse(patch.port);
+    const publicAddress = patch.publicAddress === undefined ? state.publicAddress : publicAddressSchema.parse(patch.publicAddress);
     const memoryMb = patch.memoryMb ?? state.memoryMb;
     // Lowering the maximum below the saved minimum lowers the minimum with it, so the pair stays valid.
     const initMemoryMb = patch.initMemoryMb ?? Math.min(state.initMemoryMb, memoryMb);
@@ -645,6 +674,8 @@ export class ServerManager extends EventEmitter {
       initMemoryMb,
       sleepWhenEmpty: patch.sleepWhenEmpty ?? state.sleepWhenEmpty,
       sleepAfterMinutes: patch.sleepAfterMinutes ?? state.sleepAfterMinutes,
+      port,
+      publicAddress,
     });
     this.publish();
   }

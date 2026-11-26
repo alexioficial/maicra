@@ -1463,6 +1463,12 @@ select.input {
   flex: 1 1 260px;
 }
 
+.row-fields .connection-save {
+  flex: 0 1 200px;
+  justify-content: flex-end;
+  align-items: flex-start;
+}
+
 .row-fields .field-label {
   color: var(--gray-800);
   font-size: 18px;

@@ -53,6 +53,8 @@ test('update keeps the memory value on disk', async () => {
       initMemoryMb: 2048,
       sleepWhenEmpty: false,
       sleepAfterMinutes: 60,
+      port: null,
+      publicAddress: null,
     });
     await store.update({ memoryMb: 8192 });
 
